@@ -171,6 +171,7 @@ C_BRANCH=$(printf '\033[95m')  # bright magenta: non-main branch alert
 C_NOGIT=$(printf '\033[1;31m') # bold red: not a git repo
 C_WARN=$(printf '\033[33m')    # yellow: commit-less repo
 C_SEP=$(printf '\033[90m')     # gray separator
+C_MARKER=$(printf '\033[38;5;250m') # light-gray left-edge marker (256-color)
 C_AGENTS=$(printf '\033[33m')  # yellow: live subagents
 C_RST=$(printf '\033[0m')
 if [ -n "$ctx" ]; then
@@ -219,7 +220,7 @@ fi
 
 # '❯' (chevron) keeps the model name off the terminal's left edge; the first
 # segment follows after a plain space, segments are joined by the gray separator
-out="${C_SEP}❯${C_RST}"
+out="${C_MARKER}❯${C_RST}"
 glue=" "
 for seg in "$seg_model" "$seg_ctx" "$seg_agents" "$seg_diff" "$seg_branch" "$seg_dir"; do
   [ -z "$seg" ] && continue
