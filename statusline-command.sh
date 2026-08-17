@@ -1,6 +1,6 @@
 #!/bin/sh
 # Qoder CLI status line.
-# Renders one compact line:  ▏ model 400k | ctx 11% | AG 2 | +12/-3 | branch | ~/dev/tgwizard
+# Renders one compact line:  ❯ model 400k | ctx 11% | AG 2 | +12/-3 | branch | ~/dev/tgwizard
 # AG = number of live subagents (only shown while > 0): the max of two
 # sources — Agent tool_use calls without a tool_result yet in the session
 # transcript, and non-terminal subagents/task-*.json registry entries (the
@@ -217,11 +217,14 @@ elif [ -n "$nogit" ]; then
   seg_branch="${C_NOGIT}NO GIT!${C_RST}"
 fi
 
-# '▏' keeps the model name off the terminal's left edge without a space
-out="${C_SEP}▏${C_RST}"
+# '❯' (chevron) keeps the model name off the terminal's left edge; the first
+# segment follows after a plain space, segments are joined by the gray separator
+out="${C_SEP}❯${C_RST}"
+glue=" "
 for seg in "$seg_model" "$seg_ctx" "$seg_agents" "$seg_diff" "$seg_branch" "$seg_dir"; do
   [ -z "$seg" ] && continue
-  out="$out$sep$seg"
+  out="$out$glue$seg"
+  glue="$sep"
 done
 
 printf '%s' "$out"

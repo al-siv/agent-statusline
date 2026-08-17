@@ -6,14 +6,14 @@ One POSIX shell script, no dependencies beyond `jq` and `git`.
 Renders a single compact line:
 
 ```
-▏ Qwen3.8-Max 400k | ctx 11% | AG 2 | +12/-3 | main | ~/dev/project
+❯ Qwen3.8-Max 400k | ctx 11% | AG 2 | +12/-3 | main | ~/dev/project
 ```
 
 ## Segments
 
 | Segment | Source | Notes |
 | --- | --- | --- |
-| `▏` | — | Gray left-edge marker, keeps the model name off the terminal edge. |
+| `❯` | — | Gray left-edge marker (chevron), keeps the model name off the terminal edge. |
 | Model | `model.display_name` | Followed by the context window limit in compact form (`4k`, `400k`, `1M`). |
 | ctx | `context_window.used_percentage` | Percentage of the context window currently used. Green up to 50%, yellow up to 80%, red above. Falls back to `100 - remaining_percentage`. |
 | AG N | session transcript + subagent registry | Live subagent count: the max of Agent tool calls without a result yet, and non-terminal `subagents/task-*.json` entries (background agents are only visible there). Shown only while > 0. |
