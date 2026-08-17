@@ -1,5 +1,5 @@
 # harness-pin: хэши файлов харнесса родителя (/Users/alsiv/dev/qoder-skills)
 # переписан: 2026-08-17 (дата последней адаптации этого репо)
-94aa967afe68f878fb95ba56641c12dd20f0e26f93eda9fc92eea5e71b6f7032  AGENTS.md
-066a887d1d14d696876cc61fd4963d52651822bd5e7431f6e96404272aabf853  contracts/AGENTS.md
+76ee233dd0ab82c1f44aebb5f6adbaf326e0e7bb8629f478dfcba4b9ba995d57  AGENTS.md
+c811d38794e9903c6b14bd216b743eb09b6a3177c6754ea634267b6e35bc91ef  contracts/AGENTS.md
 62b8072c13102e005fc09cf949f14e81703571958814efa4ff4aa7aabe319d42  .hooks/pre-push
