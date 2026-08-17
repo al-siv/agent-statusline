@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# pre-push: не пушить репозиторий, пока нарушены инварианты релиза.
+# Активация: git config core.hooksPath .hooks
+#
+# Гейты (модель ~/dev/qoder-skills, адаптированная к одному продукту):
+#   1. drift — repo и рантайм расходятся (./sync.sh status);
+#   2. contract-per-object — у компонента есть контракт contracts/<name>.md,
+#      журнал contracts/<name>-journal.md и ровно одна строка IDX в
+#      contracts/AGENTS.md; BACKLOG пуст по построению: контрактная система
+#      установлена вместе с продуктом, новые продукты получают контракт
+#      и журнал до первой правки (contract-first).
+set -euo pipefail
+
+REPO_DIR="$(git rev-parse --show-toplevel)"
+cd "$REPO_DIR"
+fail=0
+
+# Гейт 1: drift repo <-> runtime
+if ! ./sync.sh status >/dev/null 2>&1; then
+  echo "pre-push: drift между репо и рантаймом:" >&2
+  ./sync.sh status >&2 || true
+  echo "pre-push: разрешите дрифт (./sync.sh push либо pull с подтверждением) и повторите git push." >&2
+  fail=1
+fi
+
+# Компоненты: '<файл-артефакт>:<имя контракта>'. Новый компонент добавляется
+# сюда вместе с контрактом и журналом — компонента без пары файлов не существует.
+OBJECTS="statusline-command.sh:statusline"
+
+for entry in $OBJECTS; do
+  file="${entry%%:*}"
+  name="${entry##*:}"
+  [ -f "$file" ] || continue
+  contract="contracts/$name.md"
+  journal="contracts/$name-journal.md"
+
+  # Гейт 2: контракт, журнал и IDX-строка для каждого компонента
+  if [ ! -f "$contract" ]; then
+    echo "pre-push: компонент '$file' без контракта: $contract (MUST: контракт не позже первой правки; contract-first)." >&2
+    fail=1
+    continue
+  fi
+  if [ ! -f "$journal" ]; then
+    echo "pre-push: компонент '$file' без журнала: $journal (MUST: журнал создаётся вместе с контрактом)." >&2
+    fail=1
+  fi
+  idx_count="$(grep -E '^- \*\*IDX-[0-9]+\*\*' contracts/AGENTS.md | grep -c "\[$name\.md\]" || true)"
+  if [ "$idx_count" -ne 1 ]; then
+    echo "pre-push: у '$name' строк IDX в contracts/AGENTS.md: $idx_count (нужна ровно одна)." >&2
+    fail=1
+  fi
+done
+
+if [ "$fail" -ne 0 ]; then
+  echo "pre-push: пуш заблокирован; исправьте нарушения и повторите git push." >&2
+  exit 1
+fi
