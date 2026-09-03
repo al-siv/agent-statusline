@@ -1,0 +1,8 @@
+#!/bin/sh
+# Chain to the shared Qoder AI tracker. This repo sets core.hooksPath=.hooks, which
+# shadows the installer's <repo>/.git/hooks/post-commit, so without this line the
+# tracker never runs here. One script for all such repos, deployed from
+# ~/dev/qoder-instructions: ~/.qoder-cn/hooks/qoder-post-commit.sh
+chain="$HOME/.qoder-cn/hooks/qoder-post-commit.sh"
+[ -f "$chain" ] || { echo "post-commit: $chain missing — run ./sync.sh push in ~/dev/qoder-instructions" >&2; exit 0; }
+exec sh "$chain"
