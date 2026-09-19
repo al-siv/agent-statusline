@@ -2,56 +2,243 @@
 # pre-push: не пушить репозиторий, пока нарушены инварианты релиза.
 # Активация: git config core.hooksPath .hooks
 #
-# Гейты (модель ~/dev/qoder-skills, адаптированная к одному продукту):
-#   1. drift — repo и рантайм расходятся (./sync.sh status);
-#   2. contract-per-object — у компонента есть контракт contracts/<name>.md,
-#      журнал contracts/<name>-journal.md и ровно одна строка IDX в
-#      contracts/AGENTS.md; BACKLOG пуст по построению: контрактная система
-#      установлена вместе с продуктом, новые продукты получают контракт
-#      и журнал до первой правки (contract-first).
+# Этот файл — единственный владелец перечня гейтов (AGENTS.md на него ссылается).
+#
+# Гейты (модель ~/dev/qoder-skills, адаптированная к одному компоненту):
+#   1. drift — repo и рантайм расходятся (./sync.sh status). Код возврата
+#      различает исходы: 1 = дрифт (нарушение), >=2 = чекер не вынес вердикта.
+#      Оба блокируют пуш: непроверенное не равно проверенному.
+#   2. contract-per-object — компонент из OBJECTS: артефакт на месте, контракт
+#      contracts/<name>.md, журнал contracts/<name>-journal.md, ровно одна
+#      строка IDX с такой целью. И в обратную сторону: у каждого контракта в
+#      contracts/ должна быть своя строка в OBJECTS — пустой или урезанный
+#      список не снимает проверки молча. BACKLOG пуст по построению: контрактная
+#      система установлена вместе с компонентом.
+#   2b. shape — контракт несёт все семь секций-якорей и не несёт маркеров
+#      дельта-модели (## Scope / ## History / ## Implementation status,
+#      frontmatter version:): контракт — всегда гомогенизированное настоящее.
+#   2c. idx-reverse — цель ссылки каждой строки IDX ведёт на существующий файл
+#      контракта.
+#   3. links — относительные цели markdown-ссылок в отслеживаемых *.md
+#      разрешаются. Внешние http(s)/mailto/data и чистые якоря пропускаются;
+#      содержимое внутри ```-блоков не разбирается; разбираются форма `<путь>`
+#      и заголовок ссылки. Нечитаемый отслеживаемый файл — нарушение, а не
+#      пропущенная проверка.
+#   4. render — артефакт разбирается как POSIX shell (`dash -n`, при отсутствии
+#      `dash` — `sh -n` с оговоркой в сообщении) и на пустом stdin выдаёт
+#      непустую строку вместо падения (INV-4).
+#   5. harness-pin — ./harness-check.sh check чист (харнесс родителя не
+#      расходится с пином либо адаптация выполнена); exit >=2 — отсутствие
+#      вердикта, тоже нарушение.
+#
+# Граница проверки: гейты читают индекс и рабочее дерево, а не содержимое
+# пушащихся коммитов; список refs съедается из stdin и печатается при
+# блокировке, чтобы отказ был сопоставим с тем, что реально уходит.
 set -euo pipefail
 
 REPO_DIR="$(git rev-parse --show-toplevel)"
 cd "$REPO_DIR"
 fail=0
+no_verdict=0
 
-# Гейт 1: drift repo <-> runtime
-if ! ./sync.sh status >/dev/null 2>&1; then
-  echo "pre-push: drift между репо и рантаймом:" >&2
-  ./sync.sh status >&2 || true
-  echo "pre-push: разрешите дрифт (./sync.sh push либо pull с подтверждением) и повторите git push." >&2
-  fail=1
-fi
-
-# Компоненты: '<файл-артефакт>:<имя контракта>'. Новый компонент добавляется
-# сюда вместе с контрактом и журналом — компонента без пары файлов не существует.
+# Компоненты: '<файл-артефакт>:<имя контракта>', по одному на строку. Новый
+# компонент добавляется сюда вместе с контрактом и журналом. Пробелы в именах
+# не поддерживаются: список разбирается построчно, а пробел в имени разъелся
+# бы с обходом.
 OBJECTS="statusline-command.sh:statusline"
 
-for entry in $OBJECTS; do
+CONTRACT_ANCHORS="map purpose invariants specification gates risks qa"
+
+report() { echo "pre-push: $*" >&2; fail=1; }
+no_verdict_report() { report "$*: чекер не вынес вердикта — непроверяемое не равно проверенному"; no_verdict=1; }
+
+# git передаёт список refs на stdin. Он читается только при неинтерактивном
+# входе: ручной прогон хука из терминала не должен ждать закрытия tty.
+if [ -t 0 ]; then PUSH_REFS=""; else PUSH_REFS="$(cat 2>/dev/null || true)"; fi
+
+# --- Гейт 1: дрифт репо <-> рантайм -----------------------------------------
+sync_out="$(./sync.sh status </dev/null 2>&1)" && sync_rc=0 || sync_rc=$?
+case "$sync_rc" in
+  0) ;;
+  1)
+    report "drift между репо и рантаймом:"
+    printf '%s\n' "$sync_out" >&2
+    echo "pre-push: разрешите дрифт (./sync.sh push либо pull с подтверждением) и повторите git push." >&2
+    ;;
+  *)
+    report "./sync.sh status не вынес вердикта (exit $sync_rc):"
+    printf '%s\n' "$sync_out" >&2
+    no_verdict_report "чекер дрифта недоступен"
+    ;;
+esac
+
+# --- Гейт 5: сверка с харнессом родителя ------------------------------------
+hc_out="$(./harness-check.sh check </dev/null 2>&1)" && hc_rc=0 || hc_rc=$?
+case "$hc_rc" in
+  0) ;;
+  1)
+    report "харнесс родителя расходится с пином — адаптация не выполнена:"
+    printf '%s\n' "$hc_out" >&2
+    echo "pre-push: см. AGENTS.md, «Связка с харнессом qoder-skills»." >&2
+    ;;
+  *)
+    report "вывод ./harness-check.sh check (exit $hc_rc):"
+    printf '%s\n' "$hc_out" >&2
+    no_verdict_report "чекер пина недоступен"
+    ;;
+esac
+
+# --- Цель первой markdown-ссылки строки (текст ссылки не показатель) --------
+first_link_dest() { grep -oE '\]\([^)]+\)' | head -1 | sed -E 's/^\]\((.*)\)$/\1/'; }
+
+# --- Гейт 2/2b: компонент, пара файлов, форма контракта ---------------------
+if [ ! -f contracts/AGENTS.md ]; then
+  report "contracts/AGENTS.md отсутствует — IDX негде проверять."
+fi
+
+covered=""
+while IFS= read -r entry; do
+  [ -n "$entry" ] || continue
+  case "$entry" in *[[:space:]]*) report "запись OBJECTS='$entry' содержит пробел — имена не разбираются."; continue ;; esac
   file="${entry%%:*}"
   name="${entry##*:}"
-  [ -f "$file" ] || continue
+  covered="$covered $name.md"
+
+  if [ ! -f "$file" ]; then
+    report "артефакт '$file' из OBJECTS отсутствует в дереве — проверки компонента '$name' не выполнены."
+    continue
+  fi
   contract="contracts/$name.md"
   journal="contracts/$name-journal.md"
 
-  # Гейт 2: контракт, журнал и IDX-строка для каждого компонента
   if [ ! -f "$contract" ]; then
-    echo "pre-push: компонент '$file' без контракта: $contract (MUST: контракт не позже первой правки; contract-first)." >&2
-    fail=1
+    report "компонент '$file' без контракта: $contract (MUST: контракт не позже первой правки; contract-first)."
     continue
   fi
   if [ ! -f "$journal" ]; then
-    echo "pre-push: компонент '$file' без журнала: $journal (MUST: журнал создаётся вместе с контрактом)." >&2
-    fail=1
+    report "компонент '$file' без журнала: $journal (MUST: журнал создаётся вместе с контрактом)."
   fi
-  idx_count="$(grep -E '^- \*\*IDX-[0-9]+\*\*' contracts/AGENTS.md | grep -c "\[$name\.md\]" || true)"
+
+  idx_count=0
+  if [ -f contracts/AGENTS.md ]; then
+    while IFS= read -r dest; do
+      [ "$dest" = "$name.md" ] && idx_count=$((idx_count + 1))
+    done < <(grep -E '^- \*\*IDX-[0-9]+\*\*' contracts/AGENTS.md | while IFS= read -r line; do printf '%s\n' "$line" | first_link_dest; done)
+  fi
   if [ "$idx_count" -ne 1 ]; then
-    echo "pre-push: у '$name' строк IDX в contracts/AGENTS.md: $idx_count (нужна ровно одна)." >&2
-    fail=1
+    report "у '$name' строк IDX с целью ($name.md) в contracts/AGENTS.md: $idx_count (нужна ровно одна)."
+  fi
+
+  for anchor in $CONTRACT_ANCHORS; do
+    if ! grep -qF "{#$anchor}" "$contract"; then
+      report "в $contract нет обязательной секции {#$anchor} (Map, Purpose, Invariants, Specification, Gates, Risks, Q&A)."
+    fi
+  done
+  if grep -qE '^## (Scope|History|Implementation status)([[:space:]]|\{|$)' "$contract"; then
+    report "в $contract остался маркер дельта-модели (Scope/History/Implementation status) — дельты сворачиваются в Specification, история живёт в журнале."
+  fi
+  if awk '/^---[[:space:]]*$/{n++; next} n==1 && /^version:/ {found=1} END {exit !found}' "$contract"; then
+    report "в $contract есть frontmatter-поле version: — у контракта нет маркеров версии (версию несёт журнал)."
+  fi
+done <<< "$OBJECTS"
+
+# --- Гейт 2 (обратная половина): каждый контракт назван в OBJECTS -----------
+for contract_file in contracts/*.md; do
+  [ -e "$contract_file" ] || continue
+  base="$(basename "$contract_file")"
+  case "$base" in AGENTS.md|*-journal.md) continue ;; esac
+  found=0
+  for known in $covered; do
+    [ "$known" = "$base" ] && found=1
+  done
+  if [ "$found" -eq 0 ]; then
+    report "$base — контракт без строки в OBJECTS хука: его компонент не проверяется."
   fi
 done
 
+# --- Гейт 2c: обратная проверка IDX (по цели первой ссылки) -----------------
+if [ -f contracts/AGENTS.md ]; then
+  while IFS= read -r idx_target; do
+    [ -n "$idx_target" ] || continue
+    if [ ! -f "contracts/$idx_target" ]; then
+      report "строка IDX в contracts/AGENTS.md ведёт на отсутствующий contracts/$idx_target."
+    fi
+  done < <(grep -E '^- \*\*IDX-[0-9]+\*\*' contracts/AGENTS.md | while IFS= read -r line; do printf '%s\n' "$line" | first_link_dest; done)
+fi
+
+# --- Гейт 3: относительные ссылки markdown разрешаются -----------------------
+md_list="$(mktemp "${TMPDIR:-/tmp}/pre-push-md.XXXXXX")"
+trap 'rm -f "$md_list"' EXIT
+if git ls-files -z '*.md' > "$md_list"; then
+  while IFS= read -r -d '' md; do
+    md_dir="$(dirname "$md")"
+    if [ ! -r "$md" ]; then
+      report "$md отслеживается, но не читается — ссылки этого файла не проверены."
+      continue
+    fi
+    # блоки ```…``` вырезаются: пример синтаксиса ссылки в них — не ссылка
+    while IFS= read -r link; do
+      [ -n "$link" ] || continue
+      case "$link" in
+        http://*|https://*|mailto:*|data:*|\#*) continue ;;
+      esac
+      link="${link%%\"*}"                              # заголовок ссылки ("title")
+      link="${link%"${link##*[![:space:]]}"}"          # хвостовые пробелы
+      link="${link#"${link%%[![:space:]]*}"}"          # leading пробелы
+      case "$link" in
+        \<*) link="${link#<}"; link="${link%%>*}" ;;    # форма <путь с пробелами>
+      esac
+      link="${link%%#*}"                                # якорь внутри файла не проверяем
+      [ -n "$link" ] || continue
+      if [ ! -e "$md_dir/$link" ]; then
+        report "битая ссылка в $md: $link"
+      fi
+    done < <(awk '/^```/{f=!f; next} !f' "$md" | grep -oE '\]\([^)]+\)' | sed -E 's/^\]\((.*)\)$/\1/')
+  done < "$md_list"
+else
+  no_verdict_report "git ls-files не вынес вердикт"
+fi
+
+# --- Гейт 4: артефакт разбирается и деградирует, а не падает ----------------
+render_checked=0
+if command -v jq >/dev/null 2>&1; then
+  render_checked=1
+else
+  no_verdict_report "jq недоступен — проверка рендера не выполнена"
+fi
+parse_shell="dash"
+command -v dash >/dev/null 2>&1 || parse_shell="sh"
+if [ "$render_checked" -eq 1 ]; then
+  while IFS= read -r entry; do
+    [ -n "$entry" ] || continue
+    case "$entry" in *[[:space:]]*) continue ;; esac
+    file="${entry%%:*}"
+    [ -f "$file" ] || continue
+    if ! "$parse_shell" -n "$file" </dev/null 2>/dev/null; then
+      if [ "$parse_shell" = dash ]; then
+        report "$file не разбирается как POSIX sh ($parse_shell -n)."
+      else
+        report "$file не разбирается как shell ($parse_shell -n; POSIX-диалекта в PATH нет — проверка слабее заявленной)."
+      fi
+      continue
+    fi
+    render_out="$(printf '' | "$parse_shell" "$file" 2>/dev/null)" && render_rc=0 || render_rc=$?
+    if [ "$render_rc" -ne 0 ]; then
+      report "$file завершился с кодом $render_rc на пустом stdin (деградация по INV-4 нарушена)."
+    elif [ -z "$render_out" ]; then
+      report "$file не вывел ничего на пустом stdin — строка должна оставаться (маркер левой границы)."
+    fi
+  done <<< "$OBJECTS"
+fi
+
 if [ "$fail" -ne 0 ]; then
   echo "pre-push: пуш заблокирован; исправьте нарушения и повторите git push." >&2
+  if [ "$no_verdict" -ne 0 ]; then
+    echo "pre-push: часть проверок не вынесла вердикта и не считается пройденной." >&2
+  fi
+  if [ -n "$PUSH_REFS" ]; then
+    echo "pre-push: отклонённые refs:" >&2
+    printf '%s\n' "$PUSH_REFS" | sed 's/^/  /' >&2
+  fi
   exit 1
 fi
