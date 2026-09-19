@@ -1,12 +1,15 @@
 #!/bin/sh
 # Qoder CLI status line.
-# Renders one compact line:  ❯ model 400k | ctx 11% | AG 2 | +12/-3 | branch | ~/dev/tgwizard
+# Renders one compact line:  ❯ model 400k | ctx 11% | cr 76% | AG 2 | +12/-3 | branch | ~/dev/tgwizard
+# cr = remaining percentage of the plan credit pool (credits.user_quota), taken
+# from the same session JSON; the CLI refreshes that snapshot, this script
+# never goes to the network or reads credentials.
 # AG = number of live subagents (only shown while > 0): the max of two
 # sources — Agent tool_use calls without a tool_result yet in the session
 # transcript, and non-terminal subagents/task-*.json registry entries (the
 # transcript misses background agents, whose tool_result is written at launch).
 # Window size (compact 4k/400k/1M) follows the model name; ctx shows USED
-# percentage (fills up as context is consumed).
+# percentage (fills up as context is consumed), cr shows what is LEFT.
 # Diff segment = git working-tree stats (tracked + untracked), not session counters.
 # Branch is bright-magenta when not main; commit-less repos show a yellow
 # "no commits"; outside any repo shouts NO GIT! in bold red.
@@ -17,6 +20,7 @@ input=$(cat)
 # Parse all fields in one jq invocation; newline-joined so empty fields
 # survive (tab-splitting would collapse empty values).
 parsed=$(printf '%s' "$input" | jq -r '
+  ((.credits.user_quota? // {}) | if type == "object" then . else {} end) as $q |
   [
     (.model.display_name // .model.id // ""),
     (if (.context_window.context_window_size? // null) != null
@@ -29,17 +33,23 @@ parsed=$(printf '%s' "$input" | jq -r '
      elif (.context_window.remaining_percentage? // null) != null
        then ((100 - .context_window.remaining_percentage) | round | tostring)
      else "" end),
+    (if (($q.total | type) == "number" and ($q.remaining | type) == "number"
+         and $q.total > 0)
+       then (($q.remaining / $q.total * 100)
+             | (if . < 0 then 0 elif . > 100 then 100 else . end) | round | tostring)
+     else "" end),
     (.workspace.current_dir // ""),
     (.transcript_path // "")
   ] | join("\n")
 ' 2>/dev/null)
 
-model=""; window=""; ctx=""; dir=""; transcript=""
+model=""; window=""; ctx=""; credits=""; dir=""; transcript=""
 if [ -n "$parsed" ]; then
   {
     IFS= read -r model
     IFS= read -r window
     IFS= read -r ctx
+    IFS= read -r credits
     IFS= read -r dir
     IFS= read -r transcript
   } <<EOF
@@ -47,6 +57,9 @@ $parsed
 EOF
 fi
 [ -z "$dir" ] && dir=$(pwd)
+# jq output is external as much as wc or the cache files are: a non-numeric
+# remainder hides the segment instead of feeding garbage to the color thresholds
+case "$credits" in ''|*[!0-9]*) credits="" ;; esac
 
 added=0; removed=0; branch=""; nogit=""; nocommits=""
 if git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -182,11 +195,21 @@ if [ -n "$ctx" ]; then
 else
   C_CTX=""
 fi
+if [ -n "$credits" ]; then
+  # cr = remaining percentage: the same ramp read the other way round,
+  # green while the pool is full, red once under a fifth is left
+  if [ "$credits" -ge 50 ] 2>/dev/null; then C_CR=$(printf '\033[32m')
+  elif [ "$credits" -ge 20 ] 2>/dev/null; then C_CR=$(printf '\033[33m')
+  else C_CR=$(printf '\033[31m'); fi
+else
+  C_CR=""
+fi
 
 sep="${C_SEP} | ${C_RST}"
 
 seg_model=""
 seg_ctx=""
+seg_credits=""
 seg_agents=""
 seg_diff=""
 seg_branch=""
@@ -196,6 +219,7 @@ if [ -n "$model" ]; then
   [ -n "$window" ] && seg_model="$seg_model ${window}${C_RST}"
 fi
 [ -n "$ctx" ] && seg_ctx="${C_CTX}ctx ${ctx}%${C_RST}"
+[ -n "$credits" ] && seg_credits="${C_CR}cr ${credits}%${C_RST}"
 # Show live subagent count only while some are actually running
 if [ "$agents" -gt 0 ] 2>/dev/null; then
   seg_agents="${C_AGENTS}AG ${agents}${C_RST}"
@@ -222,7 +246,7 @@ fi
 # segment follows after a plain space, segments are joined by the gray separator
 out="${C_MARKER}❯${C_RST}"
 glue=" "
-for seg in "$seg_model" "$seg_ctx" "$seg_agents" "$seg_diff" "$seg_branch" "$seg_dir"; do
+for seg in "$seg_model" "$seg_ctx" "$seg_credits" "$seg_agents" "$seg_diff" "$seg_branch" "$seg_dir"; do
   [ -z "$seg" ] && continue
   out="$out$glue$seg"
   glue="$sep"

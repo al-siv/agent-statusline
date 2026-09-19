@@ -6,7 +6,7 @@ One POSIX shell script, no dependencies beyond `jq` and `git`.
 Renders a single compact line:
 
 ```
-❯ Qwen3.8-Max 400k | ctx 11% | AG 2 | +12/-3 | main | ~/dev/project
+❯ Qwen3.8-Max 400k | ctx 11% | cr 76% | AG 2 | +12/-3 | main | ~/dev/project
 ```
 
 ## Segments
@@ -16,6 +16,7 @@ Renders a single compact line:
 | `❯` | — | Light-gray left-edge marker (chevron), keeps the model name off the terminal edge. |
 | Model | `model.display_name` | Followed by the context window limit in compact form (`4k`, `400k`, `1M`). |
 | ctx | `context_window.used_percentage` | Percentage of the context window currently used. Green up to 50%, yellow up to 80%, red above. Falls back to `100 - remaining_percentage`. |
+| cr | `credits.user_quota` | Percentage of the plan credit pool still remaining for the current billing period (`remaining / total`, clamped to 0–100). Green from 50%, yellow from 20%, red below. The CLI refreshes this snapshot; the script makes no network calls. Hidden when no snapshot is available. |
 | AG N | session transcript + subagent registry | Live subagent count: the max of Agent tool calls without a result yet, and non-terminal `subagents/task-*.json` entries (background agents are only visible there). Shown only while > 0. |
 | +N/-M | `git diff` | Working tree changes, including untracked files. Hidden when clean. |
 | Branch | `git` | Cyan on `main`, bright magenta on any other branch, yellow `no commits` in a commit-less repo, bold red `NO GIT!` outside a repository. |

@@ -4,7 +4,7 @@ title: Contracts — Component-Centric Contract System
 kind: agents
 status: active
 created: 2026-08-14
-updated: 2026-08-17
+updated: 2026-09-19
 ---
 
 # Contracts — Component-Centric Contract System
@@ -46,7 +46,7 @@ Every file in this directory is one of: (a) this AGENTS.md index, (b) a componen
 
 One line per contract: description and contract status. No scope tails.
 
-- **IDX-1** — [statusline.md](statusline.md) — Qoder CLI status line: single POSIX-sh script rendering one compact line (model + context window, ctx % used, live subagent counter, git working-tree diff, branch, path) with graceful degradation, incremental transcript cache, and byte-exact ANSI output. Status: active.
+- **IDX-1** — [statusline.md](statusline.md) — Qoder CLI status line: single POSIX-sh script rendering one compact line (model + context window, ctx % used, plan credits % remaining, live subagent counter, git working-tree diff, branch, path) with graceful degradation, incremental transcript cache, and byte-exact ANSI output. Status: active.
 
 ## Change cycle {#change-cycle}
 
