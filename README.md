@@ -1,4 +1,4 @@
-# qoder-cli-statusline
+# agent-statusline
 
 A custom status line script for [Qoder CLI](https://docs.qoder.com).
 One POSIX shell script, no dependencies beyond `jq` and `git`.
@@ -73,7 +73,7 @@ and index: [`contracts/AGENTS.md`](contracts/AGENTS.md)); research lives in
 `analysis/`. A pre-push hook (`.hooks/`, activate with
 `git config core.hooksPath .hooks`) blocks pushes on repo↔runtime drift or
 contract/index violations. The
-harness itself is an adaptation of the `~/dev/qoder-skills` harness, kept
+harness itself is an adaptation of the `~/dev/agent-skills` harness, kept
 aligned by a hash pin and a periodic check (`./harness-check.sh`). Policy:
 [`AGENTS.md`](AGENTS.md).
 

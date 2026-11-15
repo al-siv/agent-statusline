@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # harness-check.sh — периодическая сверка с харнессом родителя
-# (~/dev/qoder-skills): пин хэшей вместо прямой зависимости от
+# (~/dev/agent-skills): пин хэшей вместо прямой зависимости от
 # «принципов родителя».
 #
 # Использование:
@@ -24,7 +24,7 @@
 # зеркалирование запрещено политикой.
 set -euo pipefail
 
-PARENT_DIR="${PARENT_HARNESS:-$HOME/dev/qoder-skills}"
+PARENT_DIR="${PARENT_HARNESS:-$HOME/dev/agent-skills}"
 PIN_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.harness-pin"
 # Файлы харнесса родителя, к изменениям которых этот репо адаптируется.
 # sync.sh родителя не пинуется: это механика синхронизации скиллов,
@@ -39,24 +39,26 @@ for _f in $PARENT_FILES; do
   case "$_f" in *[[:space:]]*) die "PARENT_FILES: '$_f' содержит пробел — список разбирается по словам" ;; esac
 done
 
-current_hashes() { # hash + relative path for each pinned parent file
+current_hashes() { # хэш и относительный путь для каждого пинуемого файла родителя
     local f
     for f in $PARENT_FILES; do
         [ -f "$PARENT_DIR/$f" ] || die "parent file not found: $PARENT_DIR/$f (harness structure changed — review the pinned file list)"
-        ( cd "$PARENT_DIR" && shasum -a 256 "$f" )
+        [ -r "$PARENT_DIR/$f" ] || die "parent file not readable: $PARENT_DIR/$f"
+        ( cd "$PARENT_DIR" && shasum -a 256 "$f" ) || die "failed to hash parent file: $PARENT_DIR/$f"
     done
 }
 
-normalized() { # 'hash path' pairs, whitespace-insensitive, sorted by path
-    grep -E '^[0-9a-f]{64}[[:space:]]' | awk '{print $1 " " $2}' | sort -k2
+normalized() { # пары 'hash path', нечувствительные к числу пробелов, отсортированные по пути
+    grep -E '^[0-9a-f]{64}[[:space:]]+[^[:space:]]+[[:space:]]*$' | awk '{print $1 " " $2}' | sort -k2
 }
 
-blob_hash_at() { # hash of <rev>:<path> in the parent, empty if absent
+blob_hash_at() { # хэш объекта <rev>:<path> в родителе; пусто, если объект отсутствует
     local rev="$1" f="$2"
+    git -C "$PARENT_DIR" cat-file -e "$rev:$f" 2>/dev/null || return 0
     git -C "$PARENT_DIR" show "$rev:$f" 2>/dev/null | shasum -a 256 | cut -d' ' -f1
 }
 
-resolve_base() { # commit whose blob matches the pinned content: sha | 'dirty' | 'unknown'
+resolve_base() { # коммит, чей blob совпадает с пинуемым содержимым: sha | 'dirty' | 'unknown'
     local f="$1" want="$2" head c
     head="$(git -C "$PARENT_DIR" rev-parse --short HEAD 2>/dev/null)" || { echo unknown; return; }
     # быстрый путь: состояние HEAD (обычный случай — чистое дерево родителя)
@@ -65,7 +67,7 @@ resolve_base() { # commit whose blob matches the pinned content: sha | 'dirty' |
     # коммит (снимок снят с рабочего дерева либо база вне доступной истории) -> dirty/unknown
     while IFS= read -r c; do
         [ "$(blob_hash_at "$c" "$f")" = "$want" ] && { echo "$c"; return; }
-    done < <(git -C "$PARENT_DIR" rev-list --max-count=200 HEAD -- "$f" 2>/dev/null)
+    done < <(git -C "$PARENT_DIR" rev-list --abbrev-commit --max-count=200 HEAD -- "$f" 2>/dev/null)
     if [ "$( cd "$PARENT_DIR" && shasum -a 256 "$f" | cut -d' ' -f1 )" = "$want" ]; then
         echo "dirty($head)"
     else
@@ -73,11 +75,12 @@ resolve_base() { # commit whose blob matches the pinned content: sha | 'dirty' |
     fi
 }
 
-pin_base_lines() { # provenance of each pinned file: the commit it was taken from
+pin_base_lines() { # происхождение каждого файла пина: коммит родителя, из которого взят хэш
     local f h
     for f in $PARENT_FILES; do
         [ -f "$PARENT_DIR/$f" ] || die "parent file not found: $PARENT_DIR/$f — пин не переписан (структура харнесса родителя изменилась?)"
-        h="$( cd "$PARENT_DIR" && shasum -a 256 "$f" | cut -d' ' -f1 )"
+        [ -r "$PARENT_DIR/$f" ] || die "parent file not readable: $PARENT_DIR/$f — пин не переписан"
+        h="$( cd "$PARENT_DIR" && shasum -a 256 "$f" | cut -d' ' -f1 )" || die "failed to hash parent file: $PARENT_DIR/$f"
         echo "# база $f: $(resolve_base "$f" "$h")"
     done
 }
@@ -106,16 +109,26 @@ cmd_pin() {
 
 cmd_show() {
     [ -f "$PIN_FILE" ] || die "pin not found: $PIN_FILE (run: ./harness-check.sh pin)"
+    [ -r "$PIN_FILE" ] || die "pin not readable: $PIN_FILE"
     cat "$PIN_FILE"
 }
 
 cmd_check() {
     [ -f "$PIN_FILE" ] || die "pin not found: $PIN_FILE (run: ./harness-check.sh pin)"
-    local pinned current pin_date delta_hint f base
+    [ -r "$PIN_FILE" ] || die "pin not readable: $PIN_FILE"
+    local pinned current pin_date delta_hint f base expected_files pinned_files
+    if grep -vE '^[[:space:]]*(#|$)|^[0-9a-f]{64}[[:space:]]+[^[:space:]]+[[:space:]]*$' "$PIN_FILE" >/dev/null 2>&1; then
+        die "в пине есть нераспознанные строки — испорчен $PIN_FILE (перепишите: ./harness-check.sh pin)"
+    fi
     # grep без совпадения + pipefail иначе обрывает скрипт кодом 1, который
     # неотличим от вердикта «расхождение»: пустой результат читается явно.
     pinned="$(normalized < "$PIN_FILE" || true)"
     [ -n "$pinned" ] || die "в пине нет ни одной хэш-строки — испорчен $PIN_FILE (перепишите: ./harness-check.sh pin)"
+    expected_files="$(for f in $PARENT_FILES; do printf '%s\n' "$f"; done | sort)"
+    pinned_files="$(printf '%s\n' "$pinned" | awk '{print $2}')"
+    if [ "$pinned_files" != "$expected_files" ]; then
+        die "состав файлов в $PIN_FILE не совпадает с PARENT_FILES — испорчен или устарел пин (перепишите: ./harness-check.sh pin)"
+    fi
     # два шага, а не один пайп: die внутри current_hashes в пайпе отдаёт свой
     # exit 2 через pipefail не правым звеном, и отказ чекера стал бы «расхождением»
     current_raw="$(current_hashes)"
@@ -143,7 +156,7 @@ cmd_check() {
         esac
     done
     {
-        echo "Процедура адаптации (AGENTS.md, секция «Связка с харнессом qoder-skills»):"
+        echo "Процедура адаптации (AGENTS.md, секция «Связка с харнессом agent-skills»):"
         echo "  1. изменения родителя по файлам пина:"
         printf '%s' "$delta_hint" | sed 's/^/     /'
         echo "  2. по каждому изменению решить: переносится ли оно в локальную"

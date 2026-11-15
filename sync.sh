@@ -1,41 +1,53 @@
 #!/usr/bin/env bash
-# sync.sh — synchronize the status line script between this repo and the
-# Qoder CLI runtime file (~/.qoder-cn/statusline-command.sh, reachable
-# through the ~/.qoder symlink).
+# sync.sh — синхронизация скрипта статус-лайна между этим репозиторием и
+# рантайм-файлом Qoder CLI (~/.qoder-cn/statusline-command.sh, доступным
+# через симлинк ~/.qoder).
 #
-# Usage:
-#   ./sync.sh status   show drift between repo and runtime (exit 1 if any)
-#   ./sync.sh push     repo -> runtime (repo is source of truth)
-#   ./sync.sh pull     warn and refuse to write (contract-first: edit repo,
-#                      then push)
+# Использование:
+#   ./sync.sh status   показать дрифт между репо и рантаймом (exit 0 — чисто,
+#                      exit 1 — дрифт, exit 2 — ошибка чтения/сравнения)
+#   ./sync.sh push     репо -> рантайм (репо — источник правды)
+#   ./sync.sh pull     предупредить и отказать в записи (contract-first:
+#                      править в репо, затем push)
 #   ./sync.sh pull --confirmed statusline
-#                      adopt the runtime copy after explicit user approval
-#                      of the drift (classification before action)
+#                      принять копию из рантайма после явного подтверждения
+#                      пользователя (классификация предшествует действию)
 #
-# Safety:
-#   - Only the component file is synced; harness files (AGENTS.md, contracts/,
-#     analysis/, .hooks/, sync.sh, harness-check.sh) never enter the runtime.
-#   - Bare pull never writes: it classifies and refuses, like the parent
-#     harness in ~/dev/qoder-skills.
+# Безопасность:
+#   - Синхронизируется только файл компонента; файлы харнесса (AGENTS.md,
+#     contracts/, analysis/, .hooks/, sync.sh, harness-check.sh) в рантайм
+#     не попадают.
+#   - Вызов pull без подтверждения никогда не пишет файлы: он классифицирует
+#     дрифт и отказывает, как в родительском харнессе ~/dev/agent-skills.
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_FILE="$REPO_DIR/statusline-command.sh"
 RUNTIME_FILE="${STATUSLINE_RUNTIME:-$HOME/.qoder-cn/statusline-command.sh}"
-# Resolve symlinks in the path: ~/.qoder may be a symlink (e.g. to ~/.qoder-cn).
-if [ -e "$RUNTIME_FILE" ]; then
-    RUNTIME_FILE="$(cd "$(dirname "$RUNTIME_FILE")" && pwd -P)/$(basename "$RUNTIME_FILE")"
-fi
 OBJECT="statusline"
 
 die() { echo "error: $*" >&2; exit 2; }
 
-drift_report() { # print drift lines; return 0 = in sync, 1 = drift
-    if [ ! -f "$RUNTIME_FILE" ]; then
+# Разрешаем симлинки в пути каталога рантайма: ~/.qoder может быть симлинком
+# на ~/.qoder-cn даже тогда, когда сам файл статус-лайна ещё не создан.
+if [ -d "$(dirname "$RUNTIME_FILE")" ]; then
+    runtime_dir="$(cd "$(dirname "$RUNTIME_FILE")" 2>/dev/null && pwd -P)" || die "cannot resolve runtime directory: $(dirname "$RUNTIME_FILE")"
+    RUNTIME_FILE="$runtime_dir/$(basename "$RUNTIME_FILE")"
+fi
+
+drift_report() { # печать строк дрифта; 0 = in sync, 1 = дрифт, 2 = ошибка чекера
+    [ -f "$REPO_FILE" ] && [ -r "$REPO_FILE" ] || die "repo file not readable: $REPO_FILE"
+    if [ ! -e "$RUNTIME_FILE" ] && [ ! -L "$RUNTIME_FILE" ]; then
         echo "runtime-missing: $RUNTIME_FILE"
         return 1
     fi
-    if ! cmp -s "$REPO_FILE" "$RUNTIME_FILE"; then
+    [ -f "$RUNTIME_FILE" ] && [ -r "$RUNTIME_FILE" ] || die "runtime file not readable: $RUNTIME_FILE"
+    local cmp_rc=0
+    cmp -s "$REPO_FILE" "$RUNTIME_FILE" || cmp_rc=$?
+    if [ "$cmp_rc" -gt 1 ]; then
+        die "cmp failed for $REPO_FILE and $RUNTIME_FILE (exit $cmp_rc)"
+    fi
+    if [ "$cmp_rc" -eq 1 ]; then
         echo "drift:         $OBJECT (repo != runtime)"
         return 1
     fi
@@ -43,17 +55,18 @@ drift_report() { # print drift lines; return 0 = in sync, 1 = drift
 }
 
 cmd_status() {
-    local report
-    if report="$(drift_report)"; then
+    local report rc=0
+    report="$(drift_report)" || rc=$?
+    if [ "$rc" -eq 0 ]; then
         echo "in sync: repo and $RUNTIME_FILE"
         return 0
     fi
-    echo "$report"
-    return 1
+    [ -z "$report" ] || echo "$report"
+    return "$rc"
 }
 
 cmd_push() {
-    [ -f "$REPO_FILE" ] || die "repo file not found: $REPO_FILE"
+    [ -f "$REPO_FILE" ] && [ -r "$REPO_FILE" ] || die "repo file not found or not readable: $REPO_FILE"
     mkdir -p "$(dirname "$RUNTIME_FILE")"
     cp -p "$REPO_FILE" "$RUNTIME_FILE"
     echo "pushed: $OBJECT -> $RUNTIME_FILE"
@@ -62,10 +75,17 @@ cmd_push() {
 cmd_pull() {
     local confirmed="${1:-}"
     shift || true
-    if [ ! -f "$RUNTIME_FILE" ]; then
+    [ -f "$REPO_FILE" ] && [ -r "$REPO_FILE" ] || die "repo file not found or not readable: $REPO_FILE"
+    if [ ! -e "$RUNTIME_FILE" ] && [ ! -L "$RUNTIME_FILE" ]; then
         die "runtime file not found: $RUNTIME_FILE (nothing to pull; use push)"
     fi
-    if cmp -s "$REPO_FILE" "$RUNTIME_FILE"; then
+    [ -f "$RUNTIME_FILE" ] && [ -r "$RUNTIME_FILE" ] || die "runtime file not readable: $RUNTIME_FILE"
+    local cmp_rc=0
+    cmp -s "$REPO_FILE" "$RUNTIME_FILE" || cmp_rc=$?
+    if [ "$cmp_rc" -gt 1 ]; then
+        die "cmp failed for $REPO_FILE and $RUNTIME_FILE (exit $cmp_rc)"
+    fi
+    if [ "$cmp_rc" -eq 0 ]; then
         echo "nothing to pull: runtime matches repo."
         return 0
     fi
