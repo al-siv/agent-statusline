@@ -1,0 +1,4 @@
+# Codex CLI TUI status line slice (synced into ~/.codex/config.toml under [tui]).
+[tui]
+status_line = ["run-state", "model-with-reasoning", "current-dir", "git-branch", "context-used", "weekly-limit", "fast-mode"]
+status_line_use_colors = true

@@ -1,13 +1,13 @@
 ---
-id: statusline-journal
-title: statusline — Contract Journal
+id: qoder-journal
+title: qoder — Contract Journal
 kind: journal
-contract: statusline.md
+contract: qoder.md
 created: 2026-08-17
 updated: 2026-11-15
 ---
 
-# statusline — Journal
+# qoder — Journal
 
 ## Episodes {#episodes}
 
@@ -96,6 +96,23 @@ touched: Purpose, QA-1, refs
 
 Проверка: точечная правка путей в двух секциях без изменения поведения компонента — независимый проход отдельным агентом (`audit-prompts` + `audit-causal-structure`) по изменённым секциям в контексте: двунаправленная сверка чистая (`(a) = 0`, `(b) = 0`, `(c) = 0`), объективных дефектов нет.
 
+### EP-7 (status: implemented) — Перенос компонента Qoder в подкаталог `qoder/` и переименование контракта `statusline` → `qoder`
+touched: frontmatter (id, title, refs), Map, Purpose, INV-1, INV-2, Specification, GATE-1..GATE-3, RISK-1, RISK-3, QA-1, IDX-1
+
+Замысел: при расширении репозитория `~/dev/agent-statusline` на все рабочие CLI-харнессы макбука (`qoder`, `claude`, `codex`; research: [../analysis/2026-11-15-multi-harness-statusline-research.md](../analysis/2026-11-15-multi-harness-statusline-research.md)) компоненты разнесены по подкаталогам харнессов. Скрипт Qoder CLI перенесён из `statusline-command.sh` в `qoder/statusline-command.sh` без изменения содержимого, идентификатор компонента и пара контракта/журнала переименованы из `statusline` (`contracts/statusline.md`, `contracts/statusline-journal.md`) в `qoder` (`contracts/qoder.md`, `contracts/qoder-journal.md`), а `sync.sh` дополнительно контролирует привязку `.statusLine` в `~/.qoder-cn/settings.json`.
+
+Дельта:
+
+- Файл компонента перемещён в `qoder/statusline-command.sh` (байт-в-байт идентичен прежнему `statusline-command.sh`).
+- Контракт и журнал переименованы в `contracts/qoder.md` (`id: qoder`) и `contracts/qoder-journal.md` (`id: qoder-journal`, `contract: qoder.md`); в `refs` добавлена ссылка на исследование `../analysis/2026-11-15-multi-harness-statusline-research.md` и унифицирован относительный путь журнала (`qoder-journal.md`).
+- В `Purpose`, `INV-1`, `INV-2`, `Specification`, `GATE-1..GATE-3`, `RISK-1`, `RISK-3` и `QA-1` обновлены путь артефакта (`qoder/statusline-command.sh`), имя объекта в `sync.sh` (`qoder`, с сохранением обратного алиаса `statusline`), проверка `.statusLine` в `~/.qoder-cn/settings.json` и сняты inline-маркеры прошлых эпизодов/коммитов (`RULE-provenance`, `RULE-gate`).
+
+GATE-1: pass (2026-11-15) — построчная сверка `qoder/statusline-command.sh` против `Specification` в `contracts/qoder.md`: 100% совпадение; файл байт-в-байт совпадает с `HEAD:statusline-command.sh` (`cmp -s` = 0).
+
+GATE-2: pass (2026-11-15) — `./sync.sh push` и `./sync.sh status` чисты (как по `~/.qoder-cn/statusline-command.sh`, так и по `.statusLine` в `~/.qoder-cn/settings.json`), `.hooks/pre-push` завершается с кодом 0.
+
+GATE-3: pass (2026-11-15) — независимый аудит по `RULE-audit-pass` (`audit-prompts` + `audit-causal-structure`, агент `aeae0ef6`, и аудит механики/рендера, агент `1d4ad14f`): выявлены и устранены потеря завершающего `\n` при переносе файла (F-1, High — fixed), преждевременная запись гейтов до `sync.sh push` (F-2, High — fixed), опечатка в исторической строке `CHANGE-2026-08-17-d` (F-3, Medium — fixed), неточность в `QA-1`/`RISK-3` по алиасу `statusline` и роли `harness-check.sh` (F-4, Medium — fixed в тексте и поддержкой алиаса `statusline` → `qoder` в `sync.sh`), inline-маркеры provenance в `GATE-1..3`/`RISK-3`/`QA-1` (F-5, Medium — fixed), база путей в `refs` (F-6, Low — fixed) и полнота упоминания `.statusLine` в `INV-2`/`GATE-2`/`RISK-1` (F-7, Low — fixed).
+
 ## Chronicle {#chronicle}
 
 CHANGE-2026-08-14-a — Установка харнесса (адаптация `~/dev/qoder-skills`, research: [../analysis/2026-08-14-harness-adaptation-research.md](../analysis/2026-08-14-harness-adaptation-research.md)): backfill-контракт создан по правилу «контракт до правки» — SCOPE-v1 фиксирует текущее состояние `statusline-command.sh` (коммит `f29f893`); созданы `sync.sh`, `.hooks/pre-push` (гейты drift / contract-per-object / IDX-status-sync), `contracts/AGENTS.md`, корневой `AGENTS.md`; GATE-1 и GATE-2 pass. Решение пользователя: repo-first. Зафиксирован конфликт со скиллом publish-statusline (QA-1).
@@ -117,3 +134,5 @@ CHANGE-2026-09-19-a — EP-5 (implemented): новый сегмент `cr N%` �
 CHANGE-2026-09-19-b — Коррекция к EP-5: проход `audit-causal-structure` по его текстам (методология добавлена в `RULE-audit-pass` адаптацией харнесса `4112c1c` уже после того, как эпизод был закрыт тремя проходами `audit-prompts`/`audit-code`; применена к изменению, с которым она пришла). Тело EP-5 не правится (RULE-journal-additive), коррекция здесь. Находки — 5 Medium и 3 Low, все закрыты правкой текстов, код не менялся: (1) INV-1 и QA-2 ссылались друг на друга как на основание — INV-1 оперт на ограничение зависимостей, QA-2 теперь применение его к выбору источника; (2) обязательность привязки `$q` была подана как свойство одного поля, хотя весь разбор один — открытая часть полей 1–3 названа RISK-5 (основание подтверждено исполнением: `model` строкой и нечисловой `used_percentage` снимают всю строку, путь остаётся только через fallback на `pwd`); (3) `cr 0%` молча читался бы как «запрос будет отклонён», чего выбранный метр не обещает (выделенный пакет 0/1000 при живом плановом был в самом наблюдённом кадре) — сказано, что `total_remaining` и `is_quota_exceeded` не рендерятся и отказа сегмент не предсказывает; (4) RISK-4 снимал слепое место ссылкой на нормализатор, который типов не проверяет, и утверждал свежесть числа там, где 15 с — потолок кэша, а не периодичность — обе оговорки переписаны, возраст числа записан как неограниченный; (5) GATE-4 был закрыт однажды и не требовал основания заново при смене версии CLI — переформулирован обобщённо по той же конвенции (RULE-gate); Low:clampу не было названо основание (названо: `remaining` идёт из payload как есть), «сначала окно текущей модели» путало метр с самим окном (исправлено), «кэш не является источником данных» допускал прочтение «кэш не читается» (сказано: производное состояние, восстанавливаемое повторным разбором). Отдельный шаг доказательства — периодичность обновления снимка харнессом — не выполнен и оставлен как остаточное в RISK-4, а не закрыт рассуждением.
 
 CHANGE-2026-11-15-a — EP-6 (implemented): переименование репозитория в `~/dev/agent-statusline` (`github.com/al-siv/agent-statusline`, стабильный ID `R_kgDOTu6CJQ`) и учёт переименования родительского репо в `~/dev/agent-skills` (research: [../analysis/2026-11-15-harness-adaptation-research.md](../analysis/2026-11-15-harness-adaptation-research.md)). В `contracts/statusline.md` обновлены пути в `Purpose` («Стороны») и `QA-1`, добавлена ссылка в `refs`. Поведение и файл `statusline-command.sh` не менялись (`./sync.sh status` чист). Независимый текстово-каузальный аудит (`audit-prompts` + `audit-causal-structure`) закрыт с нулём объективных дефектов.
+
+CHANGE-2026-11-15-b — EP-7 (implemented): перенос скрипта Qoder CLI в `qoder/statusline-command.sh` и переименование контракта и журнала в `contracts/qoder.md` / `contracts/qoder-journal.md` при переходе `agent-statusline` к мультикомпонентной структуре (research: [../analysis/2026-11-15-multi-harness-statusline-research.md](../analysis/2026-11-15-multi-harness-statusline-research.md)). Содержимое скрипта и его байтовый вывод не менялись; все находки независимого аудита (`aeae0ef6` и `1d4ad14f`) устранены и верифицированы.

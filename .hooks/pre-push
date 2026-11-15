@@ -4,31 +4,35 @@
 #
 # Этот файл — единственный владелец перечня гейтов (AGENTS.md на него ссылается).
 #
-# Гейты (модель ~/dev/agent-skills, адаптированная к одному компоненту):
+# Гейты (модель ~/dev/agent-skills, адаптированная к компонентам статус-лайна):
 #   1. drift — repo и рантайм расходятся (./sync.sh status). Код возврата
 #      различает исходы: 1 = дрифт (нарушение), >=2 = чекер не вынес вердикта.
 #      Оба блокируют пуш: непроверенное не равно проверенному.
-#   2. contract-per-object — компонент из OBJECTS: артефакт на месте, контракт
-#      contracts/<name>.md, журнал contracts/<name>-journal.md, ровно одна
-#      строка IDX с такой целью. И в обратную сторону: каждый файл в
+#   2. contract-per-object — каждый компонент из OBJECTS: артефакт на месте,
+#      контракт contracts/<name>.md, журнал contracts/<name>-journal.md, ровно
+#      одна строка IDX с такой целью. И в обратную сторону: каждый файл в
 #      contracts/*.md (кроме AGENTS.md) принадлежит компоненту из OBJECTS —
 #      пустой или урезанный список не снимает проверки молча, а осиротевший
 #      контракт или журнал блокирует пуш (RULE-references-resolve). BACKLOG
-#      пуст по построению: контрактная система установлена вместе с компонентом.
+#      пуст по построению: контрактная система установлена вместе с компонентами.
 #   2b. shape — контракт несёт все семь секций-якорей и не несёт маркеров
 #      дельта-модели (## Scope / ## History / ## Implementation status,
 #      frontmatter version:): контракт — всегда гомогенизированное настоящее.
 #   2c. idx-reverse — цель ссылки каждой строки IDX ведёт на существующий файл
-#      контракта компонента.
+#      контракта компонента, а идентификаторы IDX-N не дублируются.
 #   3. links — относительные цели markdown-ссылок в отслеживаемых *.md
 #      разрешаются и остаются внутри репозитория (RULE-references-resolve).
 #      Внешние http(s)/ftp/mailto/data, абсолютные пути и чистые якоря
 #      пропускаются; содержимое внутри fenced-блоков (```+) не разбирается;
 #      разбираются форма `<путь>` и заголовок ссылки. Нечитаемый отслеживаемый
 #      файл — нарушение, а сбой git ls-files/awk/grep/sed — отсутствие вердикта.
-#   4. render — артефакт разбирается как POSIX shell (`dash -n`, при отсутствии
-#      `dash` — `sh -n` с оговоркой в сообщении) и на пустом stdin выдаёт
-#      непустую строку вместо падения (INV-4).
+#   4. render — каждый артефакт из OBJECTS проверяется по своему формату:
+#      - shell-скрипты (*.sh) разбираются интерпретатором своего shebang
+#        (`#!/bin/sh` -> `dash -n` или `sh -n`; `#!/usr/bin/env bash` /
+#        `#!/bin/bash` -> `bash -n`) и на пустом входе (`printf ''` и `printf '{}'`)
+#        завершаются с кодом 0 и непустым выводом (INV-4);
+#      - декларативные срезы (*.toml) содержат только секцию `[tui]` с валидным
+#        непустым массивом строк `status_line` и булевым `status_line_use_colors`.
 #   5. harness-pin — ./harness-check.sh check чист (харнесс родителя не
 #      расходится с пином либо адаптация выполнена); exit >=2 — отсутствие
 #      вердикта, тоже нарушение.
@@ -47,7 +51,9 @@ no_verdict=0
 # компонент добавляется сюда вместе с контрактом и журналом. Пробелы в именах
 # не поддерживаются: список разбирается построчно, а пробел в имени разъелся
 # бы с обходом.
-OBJECTS="statusline-command.sh:statusline"
+OBJECTS="qoder/statusline-command.sh:qoder
+claude/statusline.sh:claude
+codex/statusline.toml:codex"
 
 CONTRACT_ANCHORS="map purpose invariants specification gates risks qa"
 
@@ -201,10 +207,18 @@ for contract_file in contracts/*.md; do
   fi
 done
 
-# --- Гейт 2c: обратная проверка IDX (по цели первой ссылки) -----------------
+# --- Гейт 2c: обратная проверка IDX (по цели первой ссылки и уникальности ID) -
 if [ -f contracts/AGENTS.md ] && [ -r contracts/AGENTS.md ]; then
+  seen_idx_ids=""
   while IFS= read -r idx_line; do
     [ -n "$idx_line" ] || continue
+    idx_id="$(printf '%s\n' "$idx_line" | { grep -oE 'IDX-[0-9]+' || true; } | head -1)"
+    if [ -n "$idx_id" ]; then
+      case " $seen_idx_ids " in
+        *" $idx_id "*) report "дублирующийся идентификатор $idx_id в contracts/AGENTS.md." ;;
+        *) seen_idx_ids="$seen_idx_ids $idx_id" ;;
+      esac
+    fi
     idx_target="$(printf '%s\n' "$idx_line" | first_link_dest)"
     if [ -z "$idx_target" ]; then
       report "строка IDX в contracts/AGENTS.md не содержит ссылки на контракт: $idx_line"
@@ -296,35 +310,168 @@ else
   done < "$HOOK_TMPDIR/md-list"
 fi
 
-# --- Гейт 4: артефакт разбирается и деградирует, а не падает ----------------
+# --- Гейт 4: артефакт разбирается и деградирует / валидируется по формату ----
 render_checked=0
 if command -v jq >/dev/null 2>&1; then
   render_checked=1
 else
   no_verdict_report "jq недоступен — проверка рендера не выполнена"
 fi
-parse_shell="dash"
-command -v dash >/dev/null 2>&1 || parse_shell="sh"
+posix_shell="dash"
+command -v dash >/dev/null 2>&1 || posix_shell="sh"
+
+validate_toml_slice() {
+  local f="$1" awk_out awk_rc=0
+  awk_out="$(awk '
+    function fail(code) { err = code; exit code }
+    function strip_comment(s,    i, c, in_str, esc) {
+      in_str = 0; esc = 0
+      for (i = 1; i <= length(s); i++) {
+        c = substr(s, i, 1)
+        if (in_str) {
+          if (esc) { esc = 0 }
+          else if (c == "\\") { esc = 1 }
+          else if (c == "\"") { in_str = 0 }
+        } else {
+          if (c == "\"") { in_str = 1 }
+          else if (c == "#") { return substr(s, 1, i - 1) }
+        }
+      }
+      if (in_str) return "__UNTERMINATED_STRING__"
+      return s
+    }
+    function trim(s) { sub(/^[ \t\r]+/, "", s); sub(/[ \t\r]+$/, "", s); return s }
+    function bracket_delta(s,    i, c, in_str, esc, d) {
+      in_str = 0; esc = 0; d = 0
+      for (i = 1; i <= length(s); i++) {
+        c = substr(s, i, 1)
+        if (in_str) {
+          if (esc) { esc = 0 }
+          else if (c == "\\") { esc = 1 }
+          else if (c == "\"") { in_str = 0 }
+        } else {
+          if (c == "\"") { in_str = 1 }
+          else if (c == "[") { d++ }
+          else if (c == "]") { d-- }
+        }
+      }
+      return d
+    }
+    BEGIN { err = 0; sec = ""; tui_seen = 0; sl_seen = 0; col_seen = 0; in_array = 0; depth = 0 }
+    {
+      raw = strip_comment($0)
+      if (raw == "__UNTERMINATED_STRING__") fail(1)
+      line = trim(raw)
+      if (line == "") next
+      if (in_array) {
+        sl_val = sl_val " " line
+        depth += bracket_delta(line)
+        if (depth < 0) fail(1)
+        if (depth == 0) in_array = 0
+        next
+      }
+      if (line ~ /^\[/) {
+        if (line !~ /^\[[^[\]]+\]$/) fail(1)
+        sec = trim(substr(line, 2, length(line) - 2))
+        if (sec != "tui") fail(1)
+        tui_seen++
+        if (tui_seen > 1) fail(1)
+        next
+      }
+      if (sec != "tui") fail(1)
+      eq = index(line, "=")
+      if (eq == 0) fail(1)
+      k = trim(substr(line, 1, eq - 1))
+      v = trim(substr(line, eq + 1))
+      if (k == "" || v == "") fail(1)
+      if (k == "status_line") {
+        sl_seen++; if (sl_seen > 1) fail(1)
+        sl_val = v; depth = bracket_delta(v)
+        if (depth < 0) fail(1)
+        if (depth > 0) in_array = 1
+      } else if (k == "status_line_use_colors") {
+        col_seen++; if (col_seen > 1) fail(1)
+        col_val = v
+      } else {
+        fail(1)
+      }
+    }
+    END {
+      if (err != 0) exit err
+      if (in_array || tui_seen != 1 || sl_seen != 1 || col_seen != 1) exit 1
+      sub(/,[ \t]*\]$/, "]", sl_val)
+      print sl_val
+      print col_val
+    }
+  ' "$f")" || awk_rc=$?
+  [ "$awk_rc" -eq 0 ] || return 1
+  local raw_sl raw_col
+  { IFS= read -r raw_sl; IFS= read -r raw_col; } <<EOF
+$awk_out
+EOF
+  jq -en --arg sl "$raw_sl" --arg col "$raw_col" '
+    ($sl | fromjson) as $s |
+    ($col | fromjson) as $c |
+    ($s | type == "array" and length > 0 and all(.[]; (type == "string") and (length > 0)))
+    and ($c | type == "boolean")
+  ' >/dev/null 2>&1
+}
+
 if [ "$render_checked" -eq 1 ]; then
   while IFS= read -r entry; do
     [ -n "$entry" ] || continue
     case "$entry" in *[[:space:]]*) continue ;; esac
     file="${entry%%:*}"
     [ -f "$file" ] || continue
-    if ! "$parse_shell" -n "$file" </dev/null 2>/dev/null; then
-      if [ "$parse_shell" = dash ]; then
-        report "$file не разбирается как POSIX sh ($parse_shell -n)."
-      else
-        report "$file не разбирается как shell ($parse_shell -n; POSIX-диалекта в PATH нет — проверка слабее заявленной)."
-      fi
+    if [ ! -r "$file" ]; then
+      report "артефакт '$file' не читается — проверка рендера не выполнена."
       continue
     fi
-    render_out="$(printf '' | "$parse_shell" "$file" 2>/dev/null)" && render_rc=0 || render_rc=$?
-    if [ "$render_rc" -ne 0 ]; then
-      report "$file завершился с кодом $render_rc на пустом stdin (деградация по INV-4 нарушена)."
-    elif [ -z "$render_out" ]; then
-      report "$file не вывел ничего на пустом stdin — строка должна оставаться (маркер левой границы)."
-    fi
+    case "$file" in
+      *.toml)
+        if ! validate_toml_slice "$file"; then
+          report "$file не прошёл структурную проверку TOML-среза [tui] (нужны валидные status_line и status_line_use_colors без посторонних ключей)."
+        fi
+        ;;
+      *.sh)
+        shebang="$(head -n 1 "$file" 2>/dev/null || true)"
+        runner=""
+        case "$shebang" in
+          "#!/bin/sh"|"#! /bin/sh"|"#!/usr/bin/env sh")
+            runner="$posix_shell"
+            ;;
+          "#!/usr/bin/env bash"|"#!/bin/bash"|"#! /bin/bash")
+            if command -v bash >/dev/null 2>&1; then
+              runner="bash"
+            else
+              no_verdict_report "bash недоступен для проверки $file"
+              continue
+            fi
+            ;;
+          *)
+            report "в $file неизвестный или отсутствующий shebang '$shebang' — диалект проверки не определён."
+            continue
+            ;;
+        esac
+        if ! "$runner" -n "$file" </dev/null 2>/dev/null; then
+          report "$file не разбирается синтаксически ($runner -n)."
+          continue
+        fi
+        for sample_in in "" "{}"; do
+          render_out="$(printf '%s' "$sample_in" | "$runner" "$file" 2>/dev/null)" && render_rc=0 || render_rc=$?
+          if [ "$render_rc" -ne 0 ]; then
+            report "$file завершился с кодом $render_rc на входе '$sample_in' (деградация по INV-4 нарушена)."
+            break
+          elif [ -z "$render_out" ]; then
+            report "$file не вывел ничего на входе '$sample_in' — строка должна оставаться непустой."
+            break
+          fi
+        done
+        ;;
+      *)
+        report "неизвестный тип артефакта '$file' в OBJECTS — проверка рендера не определена."
+        ;;
+    esac
   done <<< "$OBJECTS"
 fi
 
