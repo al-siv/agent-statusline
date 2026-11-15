@@ -4,13 +4,14 @@ title: statusline — контракт компонента: статус-лай
 kind: contract
 status: active
 created: 2026-08-14
-updated: 2026-09-19
+updated: 2026-11-15
 owners: [alsiv]
 refs:
   - contracts/statusline-journal.md
   - ../analysis/2026-08-14-harness-adaptation-research.md
   - ../analysis/2026-08-17-harness-adaptation-research.md
   - ../analysis/2026-09-19-statusline-credits-payload-research.md
+  - ../analysis/2026-11-15-harness-adaptation-research.md
 ---
 
 # statusline — контракт компонента
@@ -35,9 +36,9 @@ refs:
 
 - Пользователь/оператор: видит строку в CLI; правит компонент через контрактный цикл.
 - Харнесс Qoder CLI: вызывает скрипт, передаёт session JSON в stdin, печатает stdout.
-- Репозиторий `~/dev/qoder-cli-statusline`: источник правды; его `AGENTS.md` задаёт политику (repo-first, contract-first, запрет blanket pull, conventional commits).
+- Репозиторий `~/dev/agent-statusline`: источник правды; его `AGENTS.md` задаёт политику (repo-first, contract-first, запрет blanket pull, conventional commits).
 - Рантайм `~/.qoder-cn/statusline-command.sh` (доступен через симлинк `~/.qoder`): разворачиваемая копия; синхронизация — `sync.sh` (`status` / `push` / `pull [--confirmed statusline]`).
-- Удалённый репозиторий (`origin`, github.com/al-siv/qoder-cli-statusline): точка публикации; публичный текст репо — английский.
+- Удалённый репозиторий (`origin`, github.com/al-siv/agent-statusline): точка публикации; публичный текст репо — английский.
 
 Контракт — источник истины о компоненте: гомогенизированная текущая спецификация, единственный нормативный источник. **Принцип восстановимости:** секция Specification несёт полный нормативный состав скрипта, так что `statusline-command.sh` восстановим из контракта практически как он есть; скрипт — рендер контракта для рантайма. Эпизоды изменений и их замыслы — в журнале [statusline-journal.md](statusline-journal.md).
 
@@ -135,6 +136,6 @@ RISK-5 — Общий разбор уязвим целиком: все поля 
 
 ## Q&A {#qa}
 
-QA-1 — Скилл `publish-statusline` (репо `~/dev/qoder-skills`) объявлял живой файл `~/.qoder/statusline-command.sh` источником правды и предписывал императивные коммит-сообщения без conventional-префикса, что противоречило политике этого репо (repo-first, conventional commits). Status: resolved (2026-08-17). Decision: скилл доработан в контрактном цикле родителя (backfill-контракт + журнал, EP-2 адаптации, коммит родителя `b264d08`): источник правды — этот репо, деплой рантайма — `./sync.sh push` этого репо, adopt — `pull --confirmed statusline`, сообщения — conventional, перед пушем `./harness-check.sh check` чист. Противоречия больше нет; скилл — актуальный транспорт публикации, согласованный с политикой этого репо.
+QA-1 — Скилл `publish-statusline` (репо `~/dev/agent-skills`) объявлял живой файл `~/.qoder/statusline-command.sh` источником правды и предписывал императивные коммит-сообщения без conventional-префикса, что противоречило политике этого репо (repo-first, conventional commits). Status: resolved (2026-08-17). Decision: скилл доработан в контрактном цикле родителя (backfill-контракт + журнал, EP-2 адаптации, коммит родителя `b264d08`): источник правды — этот репо, деплой рантайма — `./sync.sh push` этого репо, adopt — `pull --confirmed statusline`, сообщения — conventional, перед пушем `./harness-check.sh check` чист. Противоречия больше нет; скилл — актуальный транспорт публикации, согласованный с политикой этого репо.
 
 QA-2 — Где компонент берёт число кредитов: вариант «сам запросить `GET /api/v2/quota/usage`» отвергнут, вариант «взять из stdin» принят. Status: resolved (2026-09-19). Decision: только stdin (см. [../analysis/2026-09-19-statusline-credits-payload-research.md](../analysis/2026-09-19-statusline-credits-payload-research.md)). Прямой запрос означал бы сеть и вызов токена на каждом обновлении строки, чтение зашифрованного хранилища `~/.qoder-cn/.auth` и новую зависимость — против INV-1 и его границы входных данных; при этом CLI уже держит снимок квоты (кэш 15 с) и передаёт его тому же скрипту в поле `credits`. Цена решения: свежесть числа равна свежести снимка харнесса, который сам появляется только при доступной CLI квоте; собственной сетевой активности и доступа к учётным данным компонент не заводит.
