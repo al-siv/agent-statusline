@@ -7,16 +7,18 @@
 #              + секция .statusLine в ~/.claude/settings.json
 #   - codex  : codex/statusline.toml <-> ключи status_line и
 #              status_line_use_colors в секции [tui] файла ~/.codex/config.toml
+#   - agy    : agy/statusline.sh <-> ~/.gemini/antigravity-cli/statusline.sh
+#              (только скрипт: settings.json закрыт системной границей Antigravity)
 #
 # Использование:
-#   ./sync.sh status [qoder|claude|codex ...]
+#   ./sync.sh status [qoder|claude|codex|agy ...]
 #                      показать дрифт между репо и рантаймом (exit 0 — чисто,
 #                      exit 1 — дрифт, exit 2 — ошибка чтения/разбора/сравнения)
-#   ./sync.sh push [qoder|claude|codex ...]
+#   ./sync.sh push [qoder|claude|codex|agy ...]
 #                      репо -> рантайм и привязка в конфиге (репо — источник правды)
 #   ./sync.sh pull     предупредить и отказать в записи (contract-first:
 #                      править в репо, затем push)
-#   ./sync.sh pull --confirmed <qoder|claude|codex ...>
+#   ./sync.sh pull --confirmed <qoder|claude|codex|agy ...>
 #                      принять копию из рантайма после явного подтверждения
 #                      пользователя (классификация предшествует действию)
 #
@@ -26,12 +28,14 @@
 #     .hooks/, sync.sh, harness-check.sh) в рантайм не попадают.
 #   - Остальные ключи и секции ~/.qoder-cn/settings.json, ~/.claude/settings.json
 #     и ~/.codex/config.toml (включая секреты MCP-серверов) не затрагиваются.
+#   - Файл ~/.gemini/antigravity-cli/settings.json защищён системной границей
+#     Antigravity CLI и скриптом sync.sh не читается и не изменяется.
 #   - Вызов pull без подтверждения никогда не пишет файлы: он классифицирует
 #     дрифт и отказывает, как в родительском харнессе ~/dev/agent-skills.
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ALL_OBJECTS="qoder claude codex"
+ALL_OBJECTS="qoder claude codex agy"
 
 QODER_REPO_FILE="$REPO_DIR/qoder/statusline-command.sh"
 QODER_RUNTIME_FILE="${QODER_RUNTIME_FILE:-${STATUSLINE_RUNTIME:-$HOME/.qoder-cn/statusline-command.sh}}"
@@ -45,6 +49,9 @@ CLAUDE_EXPECTED_CMD="${CLAUDE_EXPECTED_CMD:-STATUSLINE_SAFE_EFFORT=\"medium high
 
 CODEX_REPO_FILE="$REPO_DIR/codex/statusline.toml"
 CODEX_CONFIG_FILE="${CODEX_CONFIG_FILE:-$HOME/.codex/config.toml}"
+
+AGY_REPO_FILE="$REPO_DIR/agy/statusline.sh"
+AGY_RUNTIME_FILE="${AGY_RUNTIME_FILE:-$HOME/.gemini/antigravity-cli/statusline.sh}"
 
 TMP_FILES=()
 cleanup_tmp() {
@@ -78,6 +85,7 @@ QODER_SETTINGS_FILE="$(resolve_parent_path "$QODER_SETTINGS_FILE")"
 CLAUDE_RUNTIME_FILE="$(resolve_parent_path "$CLAUDE_RUNTIME_FILE")"
 CLAUDE_SETTINGS_FILE="$(resolve_parent_path "$CLAUDE_SETTINGS_FILE")"
 CODEX_CONFIG_FILE="$(resolve_parent_path "$CODEX_CONFIG_FILE")"
+AGY_RUNTIME_FILE="$(resolve_parent_path "$AGY_RUNTIME_FILE")"
 
 # Проверяет и нормализует список компонентов (алиас statusline -> qoder сохраняет
 # обратную совместимость со старыми вызовами).
@@ -351,9 +359,9 @@ push_settings_binding() {
     echo "wired:  $obj -> $settings_file (.statusLine)"
 }
 
-# Проверка скрипта и его привязки для qoder / claude
+# Проверка скрипта и (опционально) его привязки в settings.json для qoder / claude / agy
 check_script_component() {
-    local obj="$1" repo_file="$2" runtime_file="$3" settings_file="$4" expected_cmd="$5"
+    local obj="$1" repo_file="$2" runtime_file="$3" settings_file="${4:-}" expected_cmd="${5:-}"
     local drifted=0 s_rc=0
     [ -f "$repo_file" ] && [ -r "$repo_file" ] || die "repo file not readable: $repo_file"
     if [ ! -e "$runtime_file" ] && [ ! -L "$runtime_file" ]; then
@@ -371,11 +379,13 @@ check_script_component() {
             drifted=1
         fi
     fi
-    check_settings_binding "$obj" "$settings_file" "$expected_cmd" || s_rc=$?
-    if [ "$s_rc" -gt 1 ]; then
-        exit "$s_rc"
-    elif [ "$s_rc" -eq 1 ]; then
-        drifted=1
+    if [ -n "$settings_file" ]; then
+        check_settings_binding "$obj" "$settings_file" "$expected_cmd" || s_rc=$?
+        if [ "$s_rc" -gt 1 ]; then
+            exit "$s_rc"
+        elif [ "$s_rc" -eq 1 ]; then
+            drifted=1
+        fi
     fi
     return "$drifted"
 }
@@ -413,6 +423,9 @@ drift_report_for() {
             ;;
         codex)
             check_codex_component
+            ;;
+        agy)
+            check_script_component "agy" "$AGY_REPO_FILE" "$AGY_RUNTIME_FILE"
             ;;
     esac
 }
@@ -610,25 +623,32 @@ push_codex_component() {
     echo "pushed: codex -> $CODEX_CONFIG_FILE ([tui])"
 }
 
+push_script_component() {
+    local obj="$1" repo_file="$2" runtime_file="$3" settings_file="${4:-}" expected_cmd="${5:-}"
+    [ -f "$repo_file" ] && [ -r "$repo_file" ] || die "repo file not found or not readable: $repo_file"
+    deploy_runtime_script "$repo_file" "$runtime_file"
+    echo "pushed: $obj -> $runtime_file"
+    if [ -n "$settings_file" ]; then
+        push_settings_binding "$obj" "$settings_file" "$expected_cmd"
+    fi
+}
+
 cmd_push() {
     local targets obj
     targets="$(validate_objects "$@")" || exit $?
     for obj in $targets; do
         case "$obj" in
             qoder)
-                [ -f "$QODER_REPO_FILE" ] && [ -r "$QODER_REPO_FILE" ] || die "repo file not found or not readable: $QODER_REPO_FILE"
-                deploy_runtime_script "$QODER_REPO_FILE" "$QODER_RUNTIME_FILE"
-                echo "pushed: qoder -> $QODER_RUNTIME_FILE"
-                push_settings_binding "qoder" "$QODER_SETTINGS_FILE" "$QODER_EXPECTED_CMD"
+                push_script_component "qoder" "$QODER_REPO_FILE" "$QODER_RUNTIME_FILE" "$QODER_SETTINGS_FILE" "$QODER_EXPECTED_CMD"
                 ;;
             claude)
-                [ -f "$CLAUDE_REPO_FILE" ] && [ -r "$CLAUDE_REPO_FILE" ] || die "repo file not found or not readable: $CLAUDE_REPO_FILE"
-                deploy_runtime_script "$CLAUDE_REPO_FILE" "$CLAUDE_RUNTIME_FILE"
-                echo "pushed: claude -> $CLAUDE_RUNTIME_FILE"
-                push_settings_binding "claude" "$CLAUDE_SETTINGS_FILE" "$CLAUDE_EXPECTED_CMD"
+                push_script_component "claude" "$CLAUDE_REPO_FILE" "$CLAUDE_RUNTIME_FILE" "$CLAUDE_SETTINGS_FILE" "$CLAUDE_EXPECTED_CMD"
                 ;;
             codex)
                 push_codex_component
+                ;;
+            agy)
+                push_script_component "agy" "$AGY_REPO_FILE" "$AGY_RUNTIME_FILE"
                 ;;
         esac
     done
@@ -640,19 +660,22 @@ cmd_push() {
 #   3 = скрипт совпадает с репо, отличается только привязка .statusLine в settings.json (-> push)
 #   4 = рантайм-артефакт (или срез [tui]) отсутствует (-> push для инициализации)
 pull_candidate_state() {
-    local obj="$1" repo_file runtime_file settings_file expected_cmd
+    local obj="$1" repo_file runtime_file settings_file="" expected_cmd=""
     case "$obj" in
-        qoder|claude)
+        qoder|claude|agy)
             if [ "$obj" = "qoder" ]; then
                 repo_file="$QODER_REPO_FILE"
                 runtime_file="$QODER_RUNTIME_FILE"
                 settings_file="$QODER_SETTINGS_FILE"
                 expected_cmd="$QODER_EXPECTED_CMD"
-            else
+            elif [ "$obj" = "claude" ]; then
                 repo_file="$CLAUDE_REPO_FILE"
                 runtime_file="$CLAUDE_RUNTIME_FILE"
                 settings_file="$CLAUDE_SETTINGS_FILE"
                 expected_cmd="$CLAUDE_EXPECTED_CMD"
+            else
+                repo_file="$AGY_REPO_FILE"
+                runtime_file="$AGY_RUNTIME_FILE"
             fi
             [ -f "$repo_file" ] && [ -r "$repo_file" ] || die "repo file not found or not readable: $repo_file"
             if [ ! -e "$runtime_file" ] && [ ! -L "$runtime_file" ]; then
@@ -667,12 +690,14 @@ pull_candidate_state() {
             if [ "$cmp_rc" -eq 1 ]; then
                 return 1
             fi
-            local s_rc=0
-            check_settings_binding "$obj" "$settings_file" "$expected_cmd" >/dev/null || s_rc=$?
-            if [ "$s_rc" -gt 1 ]; then
-                exit "$s_rc"
-            elif [ "$s_rc" -eq 1 ]; then
-                return 3
+            if [ -n "$settings_file" ]; then
+                local s_rc=0
+                check_settings_binding "$obj" "$settings_file" "$expected_cmd" >/dev/null || s_rc=$?
+                if [ "$s_rc" -gt 1 ]; then
+                    exit "$s_rc"
+                elif [ "$s_rc" -eq 1 ]; then
+                    return 3
+                fi
             fi
             return 0
             ;;
@@ -777,6 +802,10 @@ cmd_pull() {
             claude)
                 cp -p "$CLAUDE_RUNTIME_FILE" "$CLAUDE_REPO_FILE"
                 echo "pulled: claude <- $CLAUDE_RUNTIME_FILE"
+                ;;
+            agy)
+                cp -p "$AGY_RUNTIME_FILE" "$AGY_REPO_FILE"
+                echo "pulled: agy <- $AGY_RUNTIME_FILE"
                 ;;
             codex)
                 local runtime_json sl_line col_line

@@ -22,7 +22,7 @@
 #      контракта компонента, а идентификаторы IDX-N не дублируются.
 #   3. links — относительные цели markdown-ссылок в отслеживаемых *.md
 #      разрешаются и остаются внутри репозитория (RULE-references-resolve).
-#      Внешние http(s)/ftp/mailto/data, абсолютные пути и чистые якоря
+#      Схемы URI ([A-Za-z][A-Za-z0-9+.-]*:*), абсолютные пути и чистые якоря
 #      пропускаются; содержимое внутри fenced-блоков (```+) не разбирается;
 #      разбираются форма `<путь>` и заголовок ссылки. Нечитаемый отслеживаемый
 #      файл — нарушение, а сбой git ls-files/awk/grep/sed — отсутствие вердикта.
@@ -53,7 +53,8 @@ no_verdict=0
 # бы с обходом.
 OBJECTS="qoder/statusline-command.sh:qoder
 claude/statusline.sh:claude
-codex/statusline.toml:codex"
+codex/statusline.toml:codex
+agy/statusline.sh:agy"
 
 CONTRACT_ANCHORS="map purpose invariants specification gates risks qa"
 
@@ -291,7 +292,7 @@ else
       link="${link#"${link%%[![:space:]]*}"}"
       [ -n "$link" ] || continue
       case "$link" in
-        http://*|https://*|ftp://*|mailto:*|data:*|\#*|/*) continue ;;
+        [A-Za-z][A-Za-z0-9+.-]*:*|\#*|/*) continue ;;
       esac
       link="${link%%#*}"                                # якорь внутри файла не проверяем
       link="${link%/}"                                  # хвостовой слэш каталога

@@ -15,7 +15,7 @@ each harness's runtime configuration.
 | **Qoder CLI** (`qoderclicn`) | `qoder` | [`qoder/statusline-command.sh`](qoder/statusline-command.sh) | `~/.qoder-cn/statusline-command.sh` | `~/.qoder-cn/settings.json` → `.statusLine` |
 | **Claude Code** (`claude`) | `claude` | [`claude/statusline.sh`](claude/statusline.sh) | `~/.claude/statusline.sh` | `~/.claude/settings.json` → `.statusLine` |
 | **Codex CLI** (`codex`) | `codex` | [`codex/statusline.toml`](codex/statusline.toml) | — (built-in TUI widgets) | `~/.codex/config.toml` → `[tui]` (`status_line`, `status_line_use_colors`) |
-| **Antigravity CLI** (`agy`) | — | — | — | Built-in TUI footer only (no external `statusLine` command or widget array setting) |
+| **Antigravity CLI** (`agy`) | `agy` | [`agy/statusline.sh`](agy/statusline.sh) | `~/.gemini/antigravity-cli/statusline.sh` | Script-only sync (`~/.gemini/antigravity-cli/settings.json` is system-protected) |
 
 ---
 
@@ -112,25 +112,61 @@ comments untouched.
 
 ## 4. Antigravity CLI (`agy`)
 
-Antigravity CLI uses a built-in TUI status bar (workspace, branch, model,
-token/context usage, input mode) and does not expose a custom `statusLine`
-shell hook or configurable widget array (its `~/.gemini/antigravity-cli/settings.json`
-is also protected by Antigravity's system boundary). No external status-line
-artifact is required for `agy`.
+One Bash script ([`agy/statusline.sh`](agy/statusline.sh)) aligned with the semantic color architecture of [`claude/statusline.sh`](claude/statusline.sh), reading Antigravity CLI's `StatusLineData` JSON from stdin:
+
+```
+working  my-app  feat/statusline  ∆:2+1  δ:+47/-12  Orch. Argon•H  5h:82% 7d:77%  accept-edits
+```
+
+Unlike `qoder` and `claude`, `~/.gemini/antigravity-cli/settings.json` is protected by Antigravity's system boundary, so `./sync.sh` manages only the script `~/.gemini/antigravity-cli/statusline.sh` (assuming the `statusLine` command binding in `settings.json` is configured once by the user).
+
+### Color Layers
+
+| Layer | Color | Meaning | Appears on |
+| --- | --- | --- | --- |
+| **Traffic Light** | orange (`38;5;208`) / red (`38;5;196`) | approaching / at quota ceiling; also red on `-D > 0` | `5h`, `7d`, `δ` deletions |
+| **Agent State** | gray (`245`), sky blue (`75`), bold cyan (`81`), bold gold (`214`), bold magenta (`201`), bold red (`196`) | `idle` vs `initializing`/`authenticating` vs `thinking`/`working` vs `tool_use`/`merging` vs `reviewing` vs `error` | `<agent_state>` |
+| **Effort** | bold coral-red (`203`), bold gold (`214`), bold lime (`118`), bold magenta (`201`) | `L` / `M` / `H` / `XH` (`max` → `X`) | `•eff` |
+| **Identity** | purple (`135`), pink (`211`), turquoise (`43`), sky blue (`75`) | Opus/Carbon/Orchestrator, Sonnet/Hydrogen, Fable/Argon, Haiku/Flash | `<model>` |
+| **Information** | gray (`245`) on `main`, bold bright cyan (`1;38;5;51`) off `main`, yellow (`220`), green (`40`) | branch highlight, `∆` changed/new, `δ` additions | `branch`, `∆:C+N`, `δ:+A/-D` |
+| **Access Mode** | gray (`245`), sky blue (`75`), bold gold (`214`), bold lime (`118`), purple (`135`), bold coral-red (`203`) | `ask`/`strict` → `plan` → `accept-edits` → `auto` → `best-of-n` → `yolo` | `<mode>` |
+
+### Segments
+
+| Segment | Shows | Notes |
+| --- | --- | --- |
+| `<agent_state>` | `.agent_state` | Muted gray when `idle`; semantic color gradation when active. |
+| `dir` | workspace basename | From `.workspace.current_dir` / `.cwd` (falls back to `.`). |
+| `<branch>` | git branch (or `.vcs.branch`) | Muted gray on `STATUSLINE_MAIN_BRANCH` (`main`), bold bright cyan off `main`. |
+| `∆:C+N` | changed tracked / new untracked files | `C` yellow when > 0, `N` green when > 0. |
+| `δ:+A/-D` | uncommitted line diff vs `HEAD` | `+A` green when > 0, `-D` red when > 0. |
+| `<model>•<eff>` | shortened model name + effort | Strips `Gemini` anywhere and `Pro` before `Orchestrator`, shortens `Orchestrator (X)` to `Orch. X`, appends `•eff` (also parsed from display name/id suffixes). |
+| `5h:X% 7d:Y%` | remaining quota share (`100 - used`) | Matches the active model family (`gemini-5h`/`gemini-weekly` vs `3p-5h`/`3p-weekly`, with `.rate_limits` fallback). Context token usage is intentionally omitted. |
+| `<mode>` | `.cycle_mode` (defaults to `ask`) | Color-graded rightmost permission/cycle mode (`ask`/`strict`, `plan`, `accept-edits`, `auto`, `best-of-n`, `yolo`). |
+
+### Environment Variables
+
+| Variable | Default in Script | Meaning |
+| --- | --- | --- |
+| `STATUSLINE_RL_WARN_LEFT` | `20` | quota % left below which `5h`/`7d` turns orange |
+| `STATUSLINE_RL_CRIT_LEFT` | `5` | quota % left below which `5h`/`7d` turns red |
+| `STATUSLINE_MAIN_BRANCH` | `main` | home branch name shown in muted gray |
+| `NO_COLOR` | unset | set to any non-empty value to disable all ANSI colors |
 
 ---
 
 ## Sync & Installation
 
 Check sync status across all harnesses (or pass specific component names
-`qoder`, `claude`, `codex`):
+`qoder`, `claude`, `codex`, `agy`):
 
 ```sh
 ./sync.sh status
 ```
 
 Deploy scripts and restore config bindings (`~/.qoder-cn/settings.json`,
-`~/.claude/settings.json`, `~/.codex/config.toml`):
+`~/.claude/settings.json`, `~/.codex/config.toml`; script-only deploy to
+`~/.gemini/antigravity-cli/statusline.sh` for `agy`):
 
 ```sh
 ./sync.sh push
@@ -143,6 +179,7 @@ confirmation per component):
 ./sync.sh pull --confirmed qoder
 ./sync.sh pull --confirmed claude
 ./sync.sh pull --confirmed codex
+./sync.sh pull --confirmed agy
 ```
 
 ## Harness & Contract-First Workflow
@@ -155,6 +192,7 @@ provenance journal in [`contracts/`](contracts/AGENTS.md):
 - Qoder CLI: [`contracts/qoder.md`](contracts/qoder.md) and [`contracts/qoder-journal.md`](contracts/qoder-journal.md)
 - Claude Code: [`contracts/claude.md`](contracts/claude.md) and [`contracts/claude-journal.md`](contracts/claude-journal.md)
 - Codex CLI: [`contracts/codex.md`](contracts/codex.md) and [`contracts/codex-journal.md`](contracts/codex-journal.md)
+- Antigravity CLI: [`contracts/agy.md`](contracts/agy.md) and [`contracts/agy-journal.md`](contracts/agy-journal.md)
 
 Research artifacts live in `analysis/`. A pre-push hook (`.hooks/`, activate
 with `git config core.hooksPath .hooks`) blocks pushes on repo↔runtime drift,
