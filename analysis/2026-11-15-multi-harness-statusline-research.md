@@ -76,3 +76,8 @@
    - Для `qoder` и `claude` синхронизирует и исполняемый скрипт в рантайме, и объект `.statusLine` в соответствующем `settings.json` (при совпадении `.statusLine` не перезаписывает `settings.json`, при расхождении атомарно обновляет `.statusLine` через `jq` во временный файл в том же каталоге).
    - Для `codex` сверяет и при расхождении точечно обновляет ключи `status_line` и `status_line_use_colors` внутри секции `[tui]` файла `~/.codex/config.toml` (сохраняя остальные ключи и секции без изменений).
    - Переменные окружения `QODER_RUNTIME_FILE`, `QODER_SETTINGS_FILE`, `CLAUDE_RUNTIME_FILE`, `CLAUDE_SETTINGS_FILE`, `CODEX_CONFIG_FILE` позволяют изолированно тестировать все ветки `sync.sh` и `.hooks/pre-push` во временном каталоге.
+
+## 3. Сверка с родителем после обновления `publish-statusline` (`EP-10`, коммит `b6cc755`)
+
+- В родительском репозитории `~/dev/agent-skills` в коммите `b6cc755` (`feat(publish-statusline): support multi-harness qoder, claude, and codex components`) из числа пинуемых файлов изменился только `contracts/AGENTS.md` (`2b9f690..b6cc755`): строка `IDX-4` (`publish-statusline.md`) обновлена под мульти-компонентную публикацию `qoder`, `claude` и `codex` из `~/dev/agent-statusline`.
+- Решение по процедуре адаптации (`AGENTS.md`): изменение касается исключительно индекса скиллов родителя (`IDX-4` для `publish-statusline`) и отражает уже выполненную консолидацию трёх компонентов в этом репозитории; локальные контракты и правила `contracts/AGENTS.md` здесь уже содержат `IDX-1..IDX-3` (`qoder`, `claude`, `codex`) и дополнительных правок не требуют; пин `.harness-pin` обновляется (`./harness-check.sh pin`) на базу `b6cc755`.
