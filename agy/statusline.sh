@@ -12,18 +12,19 @@
 #                             (7d reset suffix /X.X{d|h|m} stays neutral)
 #
 #   AGENT STATE GRADATION (leftmost segment):
-#     - idle                         : muted gray (38;5;245)
-#     - initializing, authenticating : sky blue (38;5;75)
-#     - thinking, working            : bold bright cyan (1;38;5;81)
-#     - tool_use, merging            : bold amber-gold (1;38;5;214)
-#     - reviewing                    : bold electric magenta (1;38;5;201)
-#     - error                        : bold red (1;38;5;196)
+#     - idle                         : ===  muted gray (38;5;245)
+#     - initializing, authenticating : ...  sky blue (38;5;75)
+#     - thinking, working            : >>>  bold bright cyan (1;38;5;81)
+#     - tool_use, merging            : ***  bold amber-gold (1;38;5;214)
+#     - reviewing                    : ???  bold electric magenta (1;38;5;201)
+#     - error                        : !!!  bold red (1;38;5;196)
+#     - other (unknown)              : raw <state>  bold bright cyan (1;38;5;81)
 #
 #   EFFORT GRADATION (distinct color per reasoning effort level):
 #     - L  (low)       : bold coral-red (1;38;5;203)
 #     - M  (medium)    : bold amber-gold (1;38;5;214)
 #     - H  (high)      : bold lime-green (1;38;5;118)
-#     - XH (xhigh/max) : bold electric magenta (1;38;5;201)
+#     - XH / X (xhigh/max) : bold electric magenta (1;38;5;201)
 #
 #   IDENTITY (which model is running, a categorical label; regular weight):
 #     - model : one hue per family -- Opus/Carbon/Orchestrator purple,
@@ -204,22 +205,23 @@ fi
 branch=$(git -C "$cwd" --no-optional-locks rev-parse --abbrev-ref HEAD 2>/dev/null)
 [ -z "$branch" ] && branch=$(jq -r '(.vcs?.branch? | strings) // empty' <<<"$input" 2>/dev/null)
 
-# ---- agent_state (gray when idle, semantic color gradation when active) ----
+# ---- agent_state (3-char ASCII glyph + semantic color; raw state on unknown)
 if [ -n "$state" ]; then
+  s_label="$state"
   scol=""
   case "$(tr '[:upper:]' '[:lower:]' <<<"$state")" in
-    idle)                           scol="$GRAY";;
-    initializing|authenticating)    scol="$STATE_INIT";;
-    thinking|working)               scol="$STATE_WORK";;
-    tool_use|merging)               scol="$STATE_TOOL";;
-    reviewing)                      scol="$STATE_REV";;
-    error)                          scol="$STATE_ERR";;
+    idle)                           s_label="==="; scol="$GRAY";;
+    initializing|authenticating)    s_label="..."; scol="$STATE_INIT";;
+    thinking|working)               s_label=">>>"; scol="$STATE_WORK";;
+    tool_use|merging)               s_label="***"; scol="$STATE_TOOL";;
+    reviewing)                      s_label="???"; scol="$STATE_REV";;
+    error)                          s_label="!!!"; scol="$STATE_ERR";;
     *)                              scol="$STATE_WORK";;
   esac
   if [ -n "$scol" ]; then
-    out="${scol}${state}${RESET}  ${dir}"
+    out="${scol}${s_label}${RESET}  ${dir}"
   else
-    out="${state}  ${dir}"
+    out="${s_label}  ${dir}"
   fi
 else
   out="$dir"

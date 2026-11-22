@@ -114,7 +114,7 @@ comments untouched.
 One Bash script ([`agy/statusline.sh`](agy/statusline.sh)) aligned with the semantic color architecture of [`claude/statusline.sh`](claude/statusline.sh), reading Antigravity CLI's `StatusLineData` JSON from stdin:
 
 ```
-working  my-app  feat/statusline  ∆:2+1/+35  Orch. Argon•H  5h:82% 7d:77%/6.5d  accept-edits
+>>>  my-app  feat/statusline  ∆:2+1/+35  Orch. Argon•H  5h:82% 7d:77%/6.5d  accept-edits
 ```
 
 Unlike `qoder` and `claude`, `~/.gemini/antigravity-cli/settings.json` is protected by Antigravity's system boundary, so `./sync.sh` manages only the script `~/.gemini/antigravity-cli/statusline.sh` (assuming the `statusLine` command binding in `settings.json` is configured once by the user).
@@ -124,7 +124,7 @@ Unlike `qoder` and `claude`, `~/.gemini/antigravity-cli/settings.json` is protec
 | Layer | Color | Meaning | Appears on |
 | --- | --- | --- | --- |
 | **Traffic Light** | orange (`38;5;208`) / red (`38;5;196`) | approaching / at quota ceiling; also red on negative line balance (`-B`) | `5h`, `7d` (reset suffix `/X.X{d|h|m}` stays neutral), `-B` in `∆:C+N/<bal>` |
-| **Agent State** | gray (`245`), sky blue (`75`), bold cyan (`81`), bold gold (`214`), bold magenta (`201`), bold red (`196`) | `idle` vs `initializing`/`authenticating` vs `thinking`/`working` vs `tool_use`/`merging` vs `reviewing` vs `error` | `<agent_state>` |
+| **Agent State** | gray (`245`), sky blue (`75`), bold cyan (`81`), bold gold (`214`), bold magenta (`201`), bold red (`196`) | `===` (`idle`) vs `...` (`initializing`/`authenticating`) vs `>>>` (`thinking`/`working`) vs `***` (`tool_use`/`merging`) vs `???` (`reviewing`) vs `!!!` (`error`); unknown states render raw in bold cyan | `<agent_state>` |
 | **Effort** | bold coral-red (`203`), bold gold (`214`), bold lime (`118`), bold magenta (`201`) | `L` / `M` / `H` / `XH` (`max` → `X`) | `•eff` |
 | **Identity** | purple (`135`), pink (`211`), turquoise (`43`), sky blue (`75`) | Opus/Carbon/Orchestrator, Sonnet/Hydrogen, Fable/Argon, Haiku/Flash | `<model>` |
 | **Information** | gray (`245`) on `main`, bold bright cyan (`1;38;5;51`) off `main`, yellow (`220`), green (`40`) | branch highlight, `∆` changed/new/positive line balance (`0`/`-` neutral) | `branch`, `∆:C+N/<bal>` |
@@ -134,7 +134,7 @@ Unlike `qoder` and `claude`, `~/.gemini/antigravity-cli/settings.json` is protec
 
 | Segment | Shows | Notes |
 | --- | --- | --- |
-| `<agent_state>` | `.agent_state` | Muted gray when `idle`; semantic color gradation when active. |
+| `<agent_state>` | `.agent_state` | Fixed 3-char ASCII glyphs 1:1 with color layers (`===` `idle`, `...` `initializing`/`authenticating`, `>>>` `thinking`/`working`, `***` `tool_use`/`merging`, `???` `reviewing`, `!!!` `error`); unknown states render raw in bold cyan; omitted when empty. |
 | `dir` | workspace basename | From `.workspace.current_dir` / `.cwd` (falls back to `.`). |
 | `<branch>` | git branch (or `.vcs.branch`) | Muted gray on `STATUSLINE_MAIN_BRANCH` (`main`), bold bright cyan off `main`. |
 | `∆:C+N/<bal>` | changed tracked (`C`), new untracked (`N`), net tracked line diff (`<bal>`) | `C` yellow when > 0, `N` green when > 0; `<bal>` is `-` when no tracked text lines changed, `0` on zero net diff of non-zero edits, `+B` green, `-B` red. |

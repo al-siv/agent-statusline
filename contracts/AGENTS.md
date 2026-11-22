@@ -4,7 +4,7 @@ title: Contracts — Component-Centric Contract System
 kind: agents
 status: active
 created: 2026-08-14
-updated: 2026-11-15
+updated: 2026-11-22
 ---
 
 # Contracts — Component-Centric Contract System
@@ -49,7 +49,7 @@ One line per contract: description and contract status. No scope tails.
 - **IDX-1** — [qoder.md](qoder.md) — Qoder CLI status line (`qoder/statusline-command.sh`): single POSIX-sh script rendering one compact line (model + context window, ctx % used, plan credits % remaining, live subagent counter, git working-tree diff, branch, path) with graceful degradation, incremental transcript cache, and byte-exact ANSI output. Status: active.
 - **IDX-2** — [claude.md](claude.md) — Claude Code status line (`claude/statusline.sh`): single Bash script rendering a semantic four-layer 256-color status line (directory, git branch, unified uncommitted file and net line balance counter `∆:C+N/<bal>`, family-colored model with attached reasoning effort `•eff`, context token count against the resolved auto-compact window, 5h/7d rate-limit share left with 7d reset countdown `7d:Y%/X.X{d|h|m}`). Status: active.
 - **IDX-3** — [codex.md](codex.md) — Codex CLI status line (`codex/statusline.toml`): declarative `[tui]` TOML configuration slice defining the ordered built-in status-line widget list (`status_line`) and color toggle (`status_line_use_colors`). Status: active.
-- **IDX-4** — [agy.md](agy.md) — Antigravity CLI status line (`agy/statusline.sh`): single Bash script rendering agent-state gradation, directory, git branch highlight (gray on `main`, bright cyan off main), unified uncommitted file and net line balance counter (`∆:C+N/<bal>`), family-colored shortened model with compact effort (`•eff`), active-family 5h/7d quota left traffic lights with 7d reset countdown (`7d:Y%/X.X{d|h|m}`), and rightmost color-graded access mode (`ask`, `plan`, `accept-edits`, `auto`, `best-of-n`, `yolo`). Status: active.
+- **IDX-4** — [agy.md](agy.md) — Antigravity CLI status line (`agy/statusline.sh`): single Bash script rendering fixed 3-char ASCII agent-state glyphs with color gradation, directory, git branch highlight (gray on `main`, bright cyan off main), unified uncommitted file and net line balance counter (`∆:C+N/<bal>`), family-colored shortened model with compact effort (`•eff`), active-family 5h/7d quota left traffic lights with 7d reset countdown (`7d:Y%/X.X{d|h|m}`), and rightmost color-graded access mode (`ask`, `plan`, `accept-edits`, `auto`, `best-of-n`, `yolo`). Status: active.
 
 ## Change cycle {#change-cycle}
 
