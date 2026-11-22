@@ -8,9 +8,10 @@
 #   "statusLine": { "type": "command", "command": "bash /path/to/statusline.sh" }
 #
 # Segments:
-#   dir  <branch>  ∆:C+N  δ:+A/-D  <model>•<eff>  NNNk  5h:X% 7d:Y%
+#   dir  <branch>  ∆:C+N/<bal>  <model>•<eff>  NNNk  5h:X% 7d:Y%/X.X{d|h|m}
 #
-# 5h / 7d show the share of each rate-limit window still left (100 - used).
+# 5h / 7d show the share of each rate-limit window still left (100 - used);
+# the optional /X.X{d|h|m} suffix on 7d shows the neutral countdown until reset.
 #
 # Color layers -- every color carries exactly one meaning:
 #
@@ -18,6 +19,7 @@
 #     - context tokens NNNk : orange >= CTX_WARN_PCT%, red >= CTX_CRIT_PCT% of the
 #                             auto-compact window
 #     - rate limits 5h / 7d : orange < RL_WARN_LEFT% left, red < RL_CRIT_LEFT% left
+#                             (7d reset suffix /X.X{d|h|m} stays neutral)
 #     orange and red are used nowhere else.
 #
 #   ATTENTION (the run is configured off the safe default, a categorical flag),
@@ -31,10 +33,10 @@
 #     The four hues are kept clear of every other layer's colors.
 #
 #   INFORMATION (data, not an alarm):
-#     - branch  : cyan when not on the main branch
-#     - ∆:C+N   : C changed tracked files (yellow), N new/untracked files (green)
-#     - δ:+A/-D : +A added lines (green), -D removed lines (neutral)
-#   green means "addition" (new files, added lines); yellow means "modified".
+#     - branch      : cyan when not on the main branch
+#     - ∆:C+N/<bal> : C changed tracked files (yellow), N new/untracked files (green),
+#                     <bal> net tracked line diff (+B green; -B, 0, - neutral)
+#   green means "addition" (new files, positive net line balance); yellow means "modified".
 #
 # Token-count note: the figure is the input-side context size from
 # context_window.current_usage (input + cache creation + cache read tokens),
@@ -60,7 +62,7 @@ MAIN_BRANCH="${STATUSLINE_MAIN_BRANCH:-main}"             # branch treated as "h
 # ---- ANSI palette (256-color) ----------------------------------------------
 ORANGE=$'\033[38;5;208m'       # traffic light: warn
 RED=$'\033[38;5;196m'          # traffic light: critical
-GREEN=$'\033[38;5;40m'         # information: addition (new files, added lines)
+GREEN=$'\033[38;5;40m'         # information: addition (new files, positive line balance)
 YELLOW=$'\033[38;5;220m'       # information: modified tracked files
 CYAN=$'\033[38;5;45m'          # information: off main branch
 MAGENTA_B=$'\033[1;38;5;201m'  # attention: run config off default
@@ -91,6 +93,7 @@ used=$(jq -r '.context_window.used_percentage // empty' <<<"$input")
 size=$(jq -r '.context_window.context_window_size // empty' <<<"$input")
 five=$(jq -r '.rate_limits.five_hour.used_percentage // empty' <<<"$input")
 week=$(jq -r '.rate_limits.seven_day.used_percentage // empty' <<<"$input")
+week_reset=$(jq -r '(.rate_limits?.seven_day?.resets_at? // null) | if type == "number" and isfinite and (isnan | not) and . > 0 then ((. - now) | if . < 0 then 0 else . end) else empty end' <<<"$input" 2>/dev/null)
 
 branch=$(git -C "$cwd" --no-optional-locks rev-parse --abbrev-ref HEAD 2>/dev/null)
 
@@ -107,20 +110,28 @@ if [ -n "$branch" ]; then
   if [ "$branch" = "$MAIN_BRANCH" ]; then out="$out  $branch"
   else out="$out  ${CYAN}${branch}${RESET}"; fi
 
-  # ∆:C+N  (always shown; C changed = yellow, N new = green)
+  # ∆:C+N/<bal>  (always shown; C changed = yellow, N new = green, <bal> net tracked line diff)
   porc=$(git -C "$cwd" --no-optional-locks status --porcelain 2>/dev/null)
   if [ -n "$porc" ]; then
     n=$(grep -c '^??' <<<"$porc")     # new (untracked)
     c=$(grep -vc '^??' <<<"$porc")    # changed/deleted/staged (tracked)
   else n=0; c=0; fi
-  out="$out  ∆:$(col_n "$c" "$YELLOW")+$(col_n "$n" "$GREEN")"
-
-  # δ:+A/-D  (uncommitted diff against HEAD; +A green, -D neutral)
   diffstat=$(git -C "$cwd" --no-optional-locks diff HEAD --numstat 2>/dev/null)
-  la=$(awk '$1 ~ /^[0-9]+$/ {a+=$1} END{print a+0}' <<<"$diffstat")
-  lr=$(awk '$2 ~ /^[0-9]+$/ {d+=$2} END{print d+0}' <<<"$diffstat")
-  if [ "$la" -gt 0 ] 2>/dev/null; then ap="${GREEN}+${la}${RESET}"; else ap="+${la}"; fi
-  out="$out  δ:${ap}/-${lr}"
+  la=$(LC_ALL=C awk '$1 ~ /^[0-9]+$/ {a+=$1} END{printf "%.0f", a+0}' <<<"$diffstat")
+  lr=$(LC_ALL=C awk '$2 ~ /^[0-9]+$/ {d+=$2} END{printf "%.0f", d+0}' <<<"$diffstat")
+  if [ "$la" -eq 0 ] && [ "$lr" -eq 0 ]; then
+    bal_s="-"
+  else
+    bal=$(( la - lr ))
+    if [ "$bal" -gt 0 ]; then
+      bal_s="${GREEN}+${bal}${RESET}"
+    elif [ "$bal" -lt 0 ]; then
+      bal_s="${bal}"
+    else
+      bal_s="0"
+    fi
+  fi
+  out="$out  ∆:$(col_n "$c" "$YELLOW")+$(col_n "$n" "$GREEN")/${bal_s}"
 fi
 
 # ---- model (one color per family; display name first, then model id) -------
@@ -245,9 +256,39 @@ rl_seg() {  # $1=label  $2=used percent
   if [ -n "$col" ]; then printf '%s%s:%s%%%s' "$col" "$1" "$p" "$RESET"
   else printf '%s:%s%%' "$1" "$p"; fi
 }
+fmt_reset() {  # $1=remaining seconds -> X.X{d|h|m}
+  [ -z "$1" ] && return
+  local val
+  val=$(LC_ALL=C awk -v s="$1" 'BEGIN {
+    if (s !~ /^[+-]?([0-9]+([.][0-9]+)?|[.][0-9]+)([eE][+-]?[0-9]+)?$/) exit 1
+    r = s + 0
+    if (r <= 0) r = 0
+    if (r >= 86400) {
+      out = sprintf("%.1fd", r / 86400)
+    } else if (r >= 3600) {
+      h = sprintf("%.1f", r / 3600) + 0
+      if (h >= 24) out = sprintf("%.1fd", r / 86400)
+      else out = sprintf("%.1fh", h)
+    } else {
+      m = sprintf("%.1f", r / 60) + 0
+      if (m >= 60) out = sprintf("%.1fh", r / 3600)
+      else out = sprintf("%.1fm", m)
+    }
+    if (out !~ /^[0-9]+[.][0-9][dhm]$/ || length(out) > 18) exit 1
+    print out
+  }') || return 0
+  printf '%s' "$val"
+}
 rl=""
 seg=$(rl_seg 5h "$five"); [ -n "$seg" ] && rl="$seg"
-seg=$(rl_seg 7d "$week"); [ -n "$seg" ] && rl="$rl${rl:+ }$seg"
+seg=$(rl_seg 7d "$week")
+rt=$(fmt_reset "$week_reset")
+if [ -n "$seg" ] && [ -n "$rt" ]; then
+  seg="${seg}/${rt}"
+elif [ -z "$seg" ] && [ -n "$rt" ]; then
+  seg="7d:-/${rt}"
+fi
+[ -n "$seg" ] && rl="$rl${rl:+ }$seg"
 [ -n "$rl" ] && out="$out  $rl"
 
 printf '%s\n' "$out"

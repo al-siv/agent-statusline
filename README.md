@@ -51,17 +51,17 @@ auto-compact window, 5-hour and 7-day rate-limit traffic lights, per-family
 model coloring, and a bold-magenta flag whenever reasoning effort is outside
 the safe set.
 
-![Claude Code status line example: my-app  feature/login  ∆:2+1  δ:+47/-12  Sonnet 4.6•L  340k  5h:12% 7d:3%](docs/claude-example.svg)
+![Claude Code status line example: my-app  feature/login  ∆:2+1/+35  Sonnet 4.6•L  340k  5h:12% 7d:3%/2.4d](docs/claude-example.svg)
 
 ### Color Layers (One Color, One Meaning)
 
 | Layer | Color | Meaning | Appears on |
 | --- | --- | --- | --- |
-| **Traffic Light** | orange (`38;5;208`) | approaching a ceiling (warn) | context tokens (`NNNk`), rate limits (`5h`, `7d`) |
-| **Traffic Light** | red (`38;5;196`) | at the ceiling (critical) | context tokens (`NNNk`), rate limits (`5h`, `7d`) |
+| **Traffic Light** | orange (`38;5;208`) | approaching a ceiling (warn) | context tokens (`NNNk`), rate limits (`5h`, `7d`; reset suffix `/X.X{d|h|m}` stays neutral) |
+| **Traffic Light** | red (`38;5;196`) | at the ceiling (critical) | context tokens (`NNNk`), rate limits (`5h`, `7d`; reset suffix `/X.X{d|h|m}` stays neutral) |
 | **Attention** | bold magenta (`1;38;5;201`) | run configured off the safe default | `•eff` outside `STATUSLINE_SAFE_EFFORT` |
 | **Identity** | purple (`38;5;135`), pink (`38;5;211`), turquoise (`38;5;43`), sky blue (`38;5;75`) | active model family (Opus, Sonnet, Fable, Haiku) | `model` |
-| **Information** | cyan (`38;5;45`), yellow (`38;5;220`), green (`38;5;40`), default | off-main branch, modified tracked files, added files/lines, neutral text | `branch`, `∆:C+N`, `δ:+A/-D`, `dir` |
+| **Information** | cyan (`38;5;45`), yellow (`38;5;220`), green (`38;5;40`), default | off-main branch, modified tracked files, added files/positive line balance, neutral text (`-B`/`0`/`-`, `/X.X{d|h|m}`) | `branch`, `∆:C+N/<bal>`, `dir`, `/X.X{d|h|m}` |
 
 ### Segments
 
@@ -69,12 +69,11 @@ the safe set.
 | --- | --- | --- |
 | `dir` | current directory basename | default |
 | `branch` | current git branch | cyan when not `STATUSLINE_MAIN_BRANCH` (`main`) |
-| `∆:C+N` | uncommitted files: `C` changed (tracked), `N` new (untracked) | `C` yellow when > 0, `N` green when > 0 |
-| `δ:+A/-D` | uncommitted line diff of tracked files vs `HEAD` | `+A` green when > 0, `-D` default |
+| `∆:C+N/<bal>` | uncommitted files (`C` changed tracked, `N` new untracked) and net tracked line diff (`<bal>`) | `C` yellow when > 0, `N` green when > 0; `<bal>` is `-` when no tracked text lines changed, `0` on zero net diff of non-zero edits, `+B` green, `-B` default |
 | `model` | active model (`display_name` with ` context)` shortened to `)`) | Opus purple, Sonnet pink, Fable turquoise, Haiku sky blue; other models default |
 | `•eff` | reasoning effort glued to the model (`L`, `M`, `H`, `XH`, `X`) | bold magenta when not in `STATUSLINE_SAFE_EFFORT` |
 | `NNNk` | input-side context tokens (`input + cache_creation + cache_read`, fallback `used_percentage * context_window_size`) | orange from `STATUSLINE_CTX_WARN_PCT` (60%), red from `STATUSLINE_CTX_CRIT_PCT` (80%) of the auto-compact window |
-| `5h:X%` / `7d:Y%` | share of the 5-hour / 7-day rate limit left (`100 - used`) | orange below `STATUSLINE_RL_WARN_LEFT` (20%), red below `STATUSLINE_RL_CRIT_LEFT` (5%) |
+| `5h:X%` / `7d:Y%/X.X{d|h|m}` | share of the 5-hour / 7-day rate limit left (`100 - used`) + 7d reset countdown (`rate_limits.seven_day.resets_at`) | orange below `STATUSLINE_RL_WARN_LEFT` (20%), red below `STATUSLINE_RL_CRIT_LEFT` (5%); neutral `/X.X{d|h|m}` suffix auto-scales to `d` (`>= 24h`), `h` (`>= 1h`), or `m` (`< 1h`), showing `7d:-/X.X{u}` if `%` is absent and omitting the suffix if `resets_at` is absent |
 
 ### Environment Variables
 
