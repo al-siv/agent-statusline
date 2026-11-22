@@ -115,7 +115,7 @@ comments untouched.
 One Bash script ([`agy/statusline.sh`](agy/statusline.sh)) aligned with the semantic color architecture of [`claude/statusline.sh`](claude/statusline.sh), reading Antigravity CLI's `StatusLineData` JSON from stdin:
 
 ```
-working  my-app  feat/statusline  ∆:2+1  δ:+47/-12  Orch. Argon•H  5h:82% 7d:77%  accept-edits
+working  my-app  feat/statusline  ∆:2+1/+35  Orch. Argon•H  5h:82% 7d:77%/6.5d  accept-edits
 ```
 
 Unlike `qoder` and `claude`, `~/.gemini/antigravity-cli/settings.json` is protected by Antigravity's system boundary, so `./sync.sh` manages only the script `~/.gemini/antigravity-cli/statusline.sh` (assuming the `statusLine` command binding in `settings.json` is configured once by the user).
@@ -124,11 +124,11 @@ Unlike `qoder` and `claude`, `~/.gemini/antigravity-cli/settings.json` is protec
 
 | Layer | Color | Meaning | Appears on |
 | --- | --- | --- | --- |
-| **Traffic Light** | orange (`38;5;208`) / red (`38;5;196`) | approaching / at quota ceiling; also red on `-D > 0` | `5h`, `7d`, `δ` deletions |
+| **Traffic Light** | orange (`38;5;208`) / red (`38;5;196`) | approaching / at quota ceiling; also red on negative line balance (`-B`) | `5h`, `7d` (reset suffix `/X.X{d|h|m}` stays neutral), `-B` in `∆:C+N/<bal>` |
 | **Agent State** | gray (`245`), sky blue (`75`), bold cyan (`81`), bold gold (`214`), bold magenta (`201`), bold red (`196`) | `idle` vs `initializing`/`authenticating` vs `thinking`/`working` vs `tool_use`/`merging` vs `reviewing` vs `error` | `<agent_state>` |
 | **Effort** | bold coral-red (`203`), bold gold (`214`), bold lime (`118`), bold magenta (`201`) | `L` / `M` / `H` / `XH` (`max` → `X`) | `•eff` |
 | **Identity** | purple (`135`), pink (`211`), turquoise (`43`), sky blue (`75`) | Opus/Carbon/Orchestrator, Sonnet/Hydrogen, Fable/Argon, Haiku/Flash | `<model>` |
-| **Information** | gray (`245`) on `main`, bold bright cyan (`1;38;5;51`) off `main`, yellow (`220`), green (`40`) | branch highlight, `∆` changed/new, `δ` additions | `branch`, `∆:C+N`, `δ:+A/-D` |
+| **Information** | gray (`245`) on `main`, bold bright cyan (`1;38;5;51`) off `main`, yellow (`220`), green (`40`) | branch highlight, `∆` changed/new/positive line balance (`0`/`-` neutral) | `branch`, `∆:C+N/<bal>` |
 | **Access Mode** | gray (`245`), sky blue (`75`), bold gold (`214`), bold lime (`118`), purple (`135`), bold coral-red (`203`) | `ask`/`strict` → `plan` → `accept-edits` → `auto` → `best-of-n` → `yolo` | `<mode>` |
 
 ### Segments
@@ -138,10 +138,9 @@ Unlike `qoder` and `claude`, `~/.gemini/antigravity-cli/settings.json` is protec
 | `<agent_state>` | `.agent_state` | Muted gray when `idle`; semantic color gradation when active. |
 | `dir` | workspace basename | From `.workspace.current_dir` / `.cwd` (falls back to `.`). |
 | `<branch>` | git branch (or `.vcs.branch`) | Muted gray on `STATUSLINE_MAIN_BRANCH` (`main`), bold bright cyan off `main`. |
-| `∆:C+N` | changed tracked / new untracked files | `C` yellow when > 0, `N` green when > 0. |
-| `δ:+A/-D` | uncommitted line diff vs `HEAD` | `+A` green when > 0, `-D` red when > 0. |
+| `∆:C+N/<bal>` | changed tracked (`C`), new untracked (`N`), net tracked line diff (`<bal>`) | `C` yellow when > 0, `N` green when > 0; `<bal>` is `-` when no tracked text lines changed, `0` on zero net diff of non-zero edits, `+B` green, `-B` red. |
 | `<model>•<eff>` | shortened model name + effort | Strips `Gemini` anywhere and `Pro` before `Orchestrator`, shortens `Orchestrator (X)` to `Orch. X`, appends `•eff` (also parsed from display name/id suffixes). |
-| `5h:X% 7d:Y%` | remaining quota share (`100 - used`) | Matches the active model family (`gemini-5h`/`gemini-weekly` vs `3p-5h`/`3p-weekly`, with `.rate_limits` fallback). Context token usage is intentionally omitted. |
+| `5h:X% 7d:Y%/X.X{d|h|m}` | remaining quota share (`100 - used`) + 7d reset countdown | Reads `.rate_limits` or falls back to active-family `.quota` buckets (`gemini-5h`/`gemini-weekly` vs `3p-5h`/`3p-weekly`). Neutral `/X.X{d|h|m}` suffix auto-scales to `d` (`>= 24h`), `h` (`>= 1h`), or `m` (`< 1h`), showing `7d:-/X.X{u}` if `%` is absent and omitting the suffix if reset time is absent. Context token usage is intentionally omitted. |
 | `<mode>` | `.cycle_mode` (defaults to `ask`) | Color-graded rightmost permission/cycle mode (`ask`/`strict`, `plan`, `accept-edits`, `auto`, `best-of-n`, `yolo`). |
 
 ### Environment Variables

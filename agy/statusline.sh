@@ -3,12 +3,13 @@
 # Semantic, color-coded status line for Antigravity CLI (matching claude-code-status-line).
 #
 # Segments:
-#   <agent_state>  dir  <branch>  ∆:C+N  δ:+A/-D  <model>•<eff>  5h:X% 7d:Y%  <mode>
+#   <agent_state>  dir  <branch>  ∆:C+N/<bal>  <model>•<eff>  5h:X% 7d:Y%/X.X{d|h|m}  <mode>
 #
 # Color layers:
 #
 #   TRAFFIC LIGHT (approaching a hard ceiling, a quantitative gradient):
 #     - quota left 5h / 7d  : orange < RL_WARN_LEFT% left, red < RL_CRIT_LEFT% left
+#                             (7d reset suffix /X.X{d|h|m} stays neutral)
 #
 #   AGENT STATE GRADATION (leftmost segment):
 #     - idle                         : muted gray (38;5;245)
@@ -29,9 +30,9 @@
 #               Sonnet/Hydrogen pink, Fable/Argon turquoise, Haiku/Flash sky blue.
 #
 #   INFORMATION (git state):
-#     - branch  : muted gray (38;5;245) on MAIN_BRANCH, bold bright cyan (1;38;5;51) off main
-#     - ∆:C+N   : C changed tracked files (yellow), N new/untracked files (green)
-#     - δ:+A/-D : +A added lines (green), -D removed lines (red when > 0)
+#     - branch      : muted gray (38;5;245) on MAIN_BRANCH, bold bright cyan (1;38;5;51) off main
+#     - ∆:C+N/<bal> : C changed tracked files (yellow), N new/untracked files (green),
+#                     <bal> net tracked line diff (+B green, -B red, 0 neutral, - neutral when none)
 #
 #   ACCESS MODE GRADATION (rightmost segment):
 #     - ask / strict         : muted gray (38;5;245)
@@ -51,8 +52,8 @@ MAIN_BRANCH="${STATUSLINE_MAIN_BRANCH:-main}"             # branch treated as "h
 # ---- ANSI palette (256-color) ----------------------------------------------
 GRAY=$'\033[38;5;245m'         # calm baseline: idle state, main branch, manual ask mode
 ORANGE=$'\033[38;5;208m'       # traffic light: warn
-RED=$'\033[38;5;196m'          # traffic light: critical / deletions
-GREEN=$'\033[38;5;40m'         # information: addition (new files, added lines)
+RED=$'\033[38;5;196m'          # traffic light: critical / negative line balance
+GREEN=$'\033[38;5;40m'         # information: addition (new files, positive line balance)
 YELLOW=$'\033[38;5;220m'       # information: modified tracked files
 BRANCH_HI=$'\033[1;38;5;51m'   # information: off-main branch (bold bright cyan)
 
@@ -89,15 +90,15 @@ if [ -n "${NO_COLOR:-}" ]; then
 fi
 
 # ---- Fields from the status JSON -------------------------------------------
-state=$(jq -r '.agent_state? // empty' <<<"$input" 2>/dev/null)
-mode=$(jq -r '.cycle_mode? // .mode? // .permission_mode? // empty' <<<"$input" 2>/dev/null)
-product=$(jq -r '.product? // empty' <<<"$input" 2>/dev/null)
-cwd=$(jq -r '.workspace?.current_dir? // .cwd? // "."' <<<"$input" 2>/dev/null)
+state=$(jq -r '(.agent_state? | strings) // empty' <<<"$input" 2>/dev/null)
+mode=$(jq -r '(.cycle_mode? | strings) // (.mode? | strings) // (.permission_mode? | strings) // empty' <<<"$input" 2>/dev/null)
+product=$(jq -r '(.product? | strings) // empty' <<<"$input" 2>/dev/null)
+cwd=$(jq -r '(.workspace?.current_dir? | strings | select(length > 0)) // (.cwd? | strings | select(length > 0)) // "."' <<<"$input" 2>/dev/null)
 [ -z "$cwd" ] && cwd="."
-dir=$(basename "$cwd" 2>/dev/null)
-raw_model=$(jq -r '.model?.display_name? // empty' <<<"$input" 2>/dev/null | sed 's/ context)/)/')
-model_id=$(jq -r '.model?.id? // empty' <<<"$input" 2>/dev/null)
-eff=$(jq -r '.effort?.level? // .model?.effort? // empty' <<<"$input" 2>/dev/null)
+dir=$(basename -- "$cwd" 2>/dev/null); [ -z "$dir" ] && dir="."
+raw_model=$(jq -r '(.model?.display_name? | strings) // empty' <<<"$input" 2>/dev/null | sed 's/ context)/)/')
+model_id=$(jq -r '(.model?.id? | strings) // empty' <<<"$input" 2>/dev/null)
+eff=$(jq -r '(.effort?.level? | strings) // (.model?.effort? | strings) // empty' <<<"$input" 2>/dev/null)
 
 # In Antigravity, display_name/id often embeds effort, e.g. "Gemini 4 Argon (Medium)" or "gemini-4-argon-medium".
 # Extract effort if not set separately, strip the parenthesized effort suffix,
@@ -121,7 +122,7 @@ model=$(sed -E '
   s/Orch[ei]strator$/Orch./I
 ' <<<"$raw_model")
 
-# Extract 5h and 7d rate-limit used percentages from .rate_limits or Antigravity's .quota buckets.
+# Extract 5h/7d rate-limit used percentages and 7d reset seconds from .rate_limits or Antigravity's .quota buckets.
 # In Antigravity, Gemini models share "gemini-5h" + "gemini-weekly", and Claude/GPT share "3p-5h" + "3p-weekly".
 quota_parsed=$(jq -r --arg mid "$model_id" --arg mname "$raw_model" '
   def slugify: ascii_downcase | gsub("[^a-z0-9.]+"; "-") | sub("^-+"; "") | sub("-+$"; "");
@@ -139,17 +140,26 @@ quota_parsed=$(jq -r --arg mid "$model_id" --arg mname "$raw_model" '
     ($k | ascii_downcase) as $kl
     | if ($kl | test("weekly|7d|week")) then "7d"
       elif ($kl | test("5h|five")) then "5h"
-      elif (($b.reset_in_seconds? // 0) > 86400) then "7d"
+      elif (($b.reset_in_seconds? // 0) | type == "number" and isfinite and (isnan | not) and . > 86400) then "7d"
       else "5h" end;
   def used_pct($b):
-    (100 - ($b.remaining_fraction * 100)) | tostring;
+    if ((($b.remaining_fraction? // null) | (type == "number" and isfinite and (isnan | not) and ((100 - (. * 100)) | isfinite)))) then
+      ((100 - ($b.remaining_fraction * 100)) | tostring)
+    else empty end;
+  def reset_sec($b):
+    if (($b.reset_in_seconds? // null) | type == "number" and isfinite and (isnan | not)) then
+      ((if $b.reset_in_seconds < 0 then 0 else $b.reset_in_seconds end) | tostring)
+    elif (($b.reset_time? // null) | type == "string") then
+      (($b.reset_time | sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z") | try fromdateiso8601 catch null)) as $ts
+      | if $ts != null then ((($ts - now) | if . < 0 then 0 else . end) | tostring) else "" end
+    else "" end;
 
   (($mid + " " + $mname) | model_family) as $fam |
   ($mid | slugify) as $mslug |
   ($mname | slugify) as $nslug |
   ((.quota? // {}) | if type == "object" then
     [ to_entries[]
-      | select((.value | type) == "object" and (.value.remaining_fraction? | type) == "number")
+      | select((.value | type) == "object" and (((.value.remaining_fraction? // null) | (type == "number" and isfinite and (isnan | not) and ((100 - (. * 100)) | isfinite))) or (reset_sec(.value) != "")))
     ]
   else [] end) as $all |
   (if $fam != "" then
@@ -157,34 +167,42 @@ quota_parsed=$(jq -r --arg mid "$model_id" --arg mname "$raw_model" '
   else [] end) as $fam_entries |
   (if ($fam_entries | length) > 0 then $fam_entries else $all end) as $picked |
   (
-    if ((.rate_limits?.five_hour?.used_percentage? // null) | type) == "number" then
+    if ((.rate_limits?.five_hour?.used_percentage? // null) | type == "number" and isfinite and (isnan | not)) then
       (.rate_limits.five_hour.used_percentage | tostring)
     else
       ([ $picked[] | select(bucket_win(.key; .value) == "5h") | used_pct(.value) ][0] // "")
     end
   ) as $five |
   (
-    if ((.rate_limits?.seven_day?.used_percentage? // null) | type) == "number" then
+    if ((.rate_limits?.seven_day?.used_percentage? // null) | type == "number" and isfinite and (isnan | not)) then
       (.rate_limits.seven_day.used_percentage | tostring)
     else
       ([ $picked[] | select(bucket_win(.key; .value) == "7d") | used_pct(.value) ][0] // "")
     end
   ) as $week |
-  "\($five)\n\($week)"
+  (
+    if ((.rate_limits?.seven_day?.resets_at? // null) | type == "number" and isfinite and (isnan | not) and . > 0) then
+      (((.rate_limits.seven_day.resets_at - now) | if . < 0 then 0 else . end) | tostring)
+    else
+      ([ $picked[] | select(bucket_win(.key; .value) == "7d") | reset_sec(.value) | select(. != "") ][0] // "")
+    end
+  ) as $week_reset |
+  "\($five)\n\($week)\n\($week_reset)"
 ' <<<"$input" 2>/dev/null)
 
-five=""; week=""
+five=""; week=""; week_reset=""
 if [ -n "$quota_parsed" ]; then
   {
     IFS= read -r five
     IFS= read -r week
+    IFS= read -r week_reset
   } <<EOF
 $quota_parsed
 EOF
 fi
 
 branch=$(git -C "$cwd" --no-optional-locks rev-parse --abbrev-ref HEAD 2>/dev/null)
-[ -z "$branch" ] && branch=$(jq -r '.vcs?.branch? // empty' <<<"$input" 2>/dev/null)
+[ -z "$branch" ] && branch=$(jq -r '(.vcs?.branch? | strings) // empty' <<<"$input" 2>/dev/null)
 
 # ---- agent_state (gray when idle, semantic color gradation when active) ----
 if [ -n "$state" ]; then
@@ -221,21 +239,28 @@ if [ -n "$branch" ]; then
     out="$out  ${BRANCH_HI}${branch}${RESET}"
   fi
 
-  # ∆:C+N  (always shown; C changed = yellow, N new = green)
+  # ∆:C+N/<bal>  (always shown; C changed = yellow, N new = green, <bal> net line balance)
   porc=$(git -C "$cwd" --no-optional-locks status --porcelain 2>/dev/null)
   if [ -n "$porc" ]; then
     n=$(grep -c '^??' <<<"$porc")     # new (untracked)
     c=$(grep -vc '^??' <<<"$porc")    # changed/deleted/staged (tracked)
   else n=0; c=0; fi
-  out="$out  ∆:$(col_n "$c" "$YELLOW")+$(col_n "$n" "$GREEN")"
-
-  # δ:+A/-D  (uncommitted diff against HEAD; +A green when > 0, -D red when > 0)
   diffstat=$(git -C "$cwd" --no-optional-locks diff HEAD --numstat 2>/dev/null)
-  la=$(awk '$1 ~ /^[0-9]+$/ {a+=$1} END{print a+0}' <<<"$diffstat")
-  lr=$(awk '$2 ~ /^[0-9]+$/ {d+=$2} END{print d+0}' <<<"$diffstat")
-  if [ "$la" -gt 0 ] 2>/dev/null; then ap="${GREEN}+${la}${RESET}"; else ap="+${la}"; fi
-  if [ "$lr" -gt 0 ] 2>/dev/null; then dp="${RED}-${lr}${RESET}"; else dp="-${lr}"; fi
-  out="$out  δ:${ap}/${dp}"
+  la=$(LC_ALL=C awk '$1 ~ /^[0-9]+$/ {a+=$1} END{printf "%.0f", a+0}' <<<"$diffstat")
+  lr=$(LC_ALL=C awk '$2 ~ /^[0-9]+$/ {d+=$2} END{printf "%.0f", d+0}' <<<"$diffstat")
+  if [ "$la" -eq 0 ] && [ "$lr" -eq 0 ]; then
+    bal_s="-"
+  else
+    bal=$(( la - lr ))
+    if [ "$bal" -gt 0 ]; then
+      bal_s="${GREEN}+${bal}${RESET}"
+    elif [ "$bal" -lt 0 ]; then
+      bal_s="${RED}${bal}${RESET}"
+    else
+      bal_s="0"
+    fi
+  fi
+  out="$out  ∆:$(col_n "$c" "$YELLOW")+$(col_n "$n" "$GREEN")/${bal_s}"
 fi
 
 # ---- model (one color per family; display name first, then model id) -------
@@ -283,7 +308,9 @@ rl_seg() {  # $1=label  $2=used percent
     if (u !~ /^[+-]?([0-9]+([.][0-9]+)?|[.][0-9]+)([eE][+-]?[0-9]+)?$/) exit 1
     p = 100 - sprintf("%.0f", u)
     if (p <= 0) p = 0
-    print p + 0
+    s = sprintf("%.0f", p)
+    if (s !~ /^[0-9]+$/ || length(s) > 18) exit 1
+    print s
   }') || return 0
   if   [ "$p" -lt "$RL_CRIT_LEFT" ]; then col="$RED"
   elif [ "$p" -lt "$RL_WARN_LEFT" ]; then col="$ORANGE"
@@ -291,9 +318,39 @@ rl_seg() {  # $1=label  $2=used percent
   if [ -n "$col" ]; then printf '%s%s:%s%%%s' "$col" "$1" "$p" "$RESET"
   else printf '%s:%s%%' "$1" "$p"; fi
 }
+fmt_reset() {  # $1=remaining seconds -> X.X{d|h|m}
+  [ -z "$1" ] && return
+  local val
+  val=$(LC_ALL=C awk -v s="$1" 'BEGIN {
+    if (s !~ /^[+-]?([0-9]+([.][0-9]+)?|[.][0-9]+)([eE][+-]?[0-9]+)?$/) exit 1
+    r = s + 0
+    if (r <= 0) r = 0
+    if (r >= 86400) {
+      out = sprintf("%.1fd", r / 86400)
+    } else if (r >= 3600) {
+      h = sprintf("%.1f", r / 3600) + 0
+      if (h >= 24) out = sprintf("%.1fd", r / 86400)
+      else out = sprintf("%.1fh", h)
+    } else {
+      m = sprintf("%.1f", r / 60) + 0
+      if (m >= 60) out = sprintf("%.1fh", r / 3600)
+      else out = sprintf("%.1fm", m)
+    }
+    if (out !~ /^[0-9]+[.][0-9][dhm]$/ || length(out) > 18) exit 1
+    print out
+  }') || return 0
+  printf '%s' "$val"
+}
 rl=""
 seg=$(rl_seg 5h "$five"); [ -n "$seg" ] && rl="$seg"
-seg=$(rl_seg 7d "$week"); [ -n "$seg" ] && rl="$rl${rl:+ }$seg"
+seg=$(rl_seg 7d "$week")
+rt=$(fmt_reset "$week_reset")
+if [ -n "$seg" ] && [ -n "$rt" ]; then
+  seg="${seg}/${rt}"
+elif [ -z "$seg" ] && [ -n "$rt" ]; then
+  seg="7d:-/${rt}"
+fi
+[ -n "$seg" ] && rl="$rl${rl:+ }$seg"
 [ -n "$rl" ] && out="$out  $rl"
 
 # ---- ACCESS MODE (rightmost segment, color-graded) -------------------------
