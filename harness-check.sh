@@ -27,10 +27,11 @@ set -euo pipefail
 PARENT_DIR="${PARENT_HARNESS:-$HOME/dev/agent-skills}"
 PIN_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.harness-pin"
 # Файлы харнесса родителя, к изменениям которых этот репо адаптируется.
-# sync.sh родителя не пинуется: это механика синхронизации каталогов скиллов,
-# к проекту статус-лайнов нерелевантная. Имена без пробелов: список
-# разбирается по словам, пробел в имени разошёлся бы с обходом.
-PARENT_FILES="AGENTS.md contracts/AGENTS.md .hooks/pre-push"
+# rules/skill-authoring.md и rules/verification.md охватывают общие правила
+# размещения, формулировок и независимой верификации (включая документы харнесса);
+# sync.sh не пинуется, так как относится только к синхронизации каталогов скиллов.
+# Имена без пробелов: список разбирается по словам, пробел в имени разошёлся бы с обходом.
+PARENT_FILES="AGENTS.md rules/skill-authoring.md rules/verification.md .hooks/pre-push"
 
 die() { echo "error: $*" >&2; exit 2; }
 
@@ -67,7 +68,7 @@ resolve_base() { # коммит, чей blob совпадает с пинуем�
     # коммит (снимок снят с рабочего дерева либо база вне доступной истории) -> dirty/unknown
     while IFS= read -r c; do
         [ "$(blob_hash_at "$c" "$f")" = "$want" ] && { echo "$c"; return; }
-    done < <(git -C "$PARENT_DIR" rev-list --abbrev-commit --max-count=200 HEAD -- "$f" 2>/dev/null)
+    done < <(git -C "$PARENT_DIR" rev-list --abbrev-commit HEAD -- "$f" 2>/dev/null)
     if [ "$( cd "$PARENT_DIR" && shasum -a 256 "$f" | cut -d' ' -f1 )" = "$want" ]; then
         echo "dirty($head)"
     else
@@ -113,10 +114,19 @@ cmd_show() {
     cat "$PIN_FILE"
 }
 
+shell_quote() { # UTF-8-безопасное POSIX-экранирование без искажения многобайтовых символов
+    local s="$1" sq="'\''"
+    case "$s" in
+        "") printf "''" ;;
+        *[!A-Za-z0-9_./:@=-]*) printf "'%s'" "${s//"'"/"$sq"}" ;;
+        *) printf '%s' "$s" ;;
+    esac
+}
+
 cmd_check() {
     [ -f "$PIN_FILE" ] || die "pin not found: $PIN_FILE (run: ./harness-check.sh pin)"
     [ -r "$PIN_FILE" ] || die "pin not readable: $PIN_FILE"
-    local pinned current pin_date delta_hint f base expected_files pinned_files
+    local pinned current pin_date delta_hint f base q_parent q_f q_rev want_hash cur_hash match_rev expected_files pinned_files
     if grep -vE '^[[:space:]]*(#|$)|^[0-9a-f]{64}[[:space:]]+[^[:space:]]+[[:space:]]*$' "$PIN_FILE" >/dev/null 2>&1; then
         die "в пине есть нераспознанные строки — испорчен $PIN_FILE (перепишите: ./harness-check.sh pin)"
     fi
@@ -144,14 +154,36 @@ cmd_check() {
     # Дельта читается от базы каждого файла; база может отсутствовать (пин до
     # фиксации баз или снимок с грязного дерева) — это говорится вслух.
     delta_hint=""
+    q_parent="$(shell_quote "$PARENT_DIR")"
     for f in $PARENT_FILES; do
+        want_hash="$(printf '%s\n' "$pinned" | awk -v p="$f" '$2 == p {print $1; exit}')"
+        cur_hash="$(printf '%s\n' "$current" | awk -v p="$f" '$2 == p {print $1; exit}')"
+        [ "$want_hash" = "$cur_hash" ] && continue
+        q_f="$(shell_quote "$f")"
         base="$(grep -m1 "^# база $f: " "$PIN_FILE" | sed -E "s|^# база $f: (.*)|\1|" || true)"
         case "$base" in
+            dirty\(*\))
+                match_rev=""
+                if [ -n "$want_hash" ]; then
+                    match_rev="$(resolve_base "$f" "$want_hash" 2>/dev/null || true)"
+                fi
+                case "$match_rev" in
+                    ""|unknown|dirty*)
+                        delta_hint="$delta_hint  # база $f: $base — совпавшего commit-blob в истории нет; пересмотреть текущий $PARENT_DIR/$f целиком"$'\n'
+                        ;;
+                    *)
+                        q_rev="$(shell_quote "$match_rev")"
+                        delta_hint="$delta_hint  # база $f: $base (blob совпадает с $match_rev)"$'\n'"  git -C $q_parent diff $q_rev -- $q_f"$'\n'
+                        ;;
+                esac
+                ;;
             ""|unknown|dirty*)
-                delta_hint="$delta_hint  git -C $PARENT_DIR log --since=${pin_date:-дату пина} -p -- $f   # база: ${base:-не записана — выбирать по дате}"$'\n'
+                q_rev="$(shell_quote "${pin_date:-дату пина}")"
+                delta_hint="$delta_hint  # база $f: ${base:-не записана} — выбирать по дате"$'\n'"  git -C $q_parent log --since=$q_rev -p -- $q_f"$'\n'
                 ;;
             *)
-                delta_hint="$delta_hint  git -C $PARENT_DIR diff $base..HEAD -- $f"$'\n'
+                q_rev="$(shell_quote "$base")"
+                delta_hint="$delta_hint  git -C $q_parent diff $q_rev -- $q_f"$'\n'
                 ;;
         esac
     done
@@ -161,7 +193,7 @@ cmd_check() {
         printf '%s' "$delta_hint" | sed 's/^/     /'
         echo "  2. по каждому изменению решить: переносится ли оно в локальную"
         echo "     адаптацию (конфликт правил — локальная правка обязательна);"
-        echo "  3. применить локальные изменения контрактным циклом этого репо;"
+        echo "  3. применить локальные изменения по правилам этого репо (contract-first там, где затронут компонент);"
         echo "  4. ./harness-check.sh pin — переписать пин."
     } >&2
     exit 1

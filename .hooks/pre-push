@@ -20,12 +20,13 @@
 #      frontmatter version:): контракт — всегда гомогенизированное настоящее.
 #   2c. idx-reverse — цель ссылки каждой строки IDX ведёт на существующий файл
 #      контракта компонента, а идентификаторы IDX-N не дублируются.
-#   3. links — относительные цели markdown-ссылок в отслеживаемых *.md
-#      разрешаются и остаются внутри репозитория (RULE-references-resolve).
-#      Схемы URI ([A-Za-z][A-Za-z0-9+.-]*:*), абсолютные пути и чистые якоря
-#      пропускаются; содержимое внутри fenced-блоков (```+) не разбирается;
-#      разбираются форма `<путь>` и заголовок ссылки. Нечитаемый отслеживаемый
-#      файл — нарушение, а сбой git ls-files/awk/grep/sed — отсутствие вердикта.
+#   3. links — относительные цели markdown-ссылок и изображений в отслеживаемых *.md
+#      разбираются через CommonMark AST (`pandoc -f commonmark -t json` + `python3`),
+#      разрешаются от каталога содержащего файла и остаются внутри репозитория
+#      (RULE-references-resolve). Схемы URI, root-relative (/path), protocol-relative
+#      (//host) и чистые якоря (#section) пропускаются; fenced-блоки (``` и ~~~)
+#      не разбираются; нечитаемый файл — нарушение, а отсутствие pandoc/python3 или
+#      сбой git ls-files / парсера — отсутствие вердикта.
 #   4. render — каждый артефакт из OBJECTS проверяется по своему формату:
 #      - shell-скрипты (*.sh) разбираются интерпретатором своего shebang
 #        (`#!/bin/sh` -> `dash -n` или `sh -n`; `#!/usr/bin/env bash` /
@@ -113,25 +114,6 @@ esac
 
 # --- Цель первой markdown-ссылки строки (безопасна при pipefail) -------------
 first_link_dest() { { grep -oE '\]\([^)]+\)' || true; } | head -1 | sed -E 's/^\]\((.*)\)$/\1/'; }
-
-# --- Физический путь файла или каталога с раскрытием цепочки симлинков -------
-resolve_phys() {
-  local p="$1" d b hops=0
-  while [ -L "$p" ]; do
-    hops=$((hops + 1))
-    [ "$hops" -le 40 ] || return 1
-    d="$(cd "$(dirname "$p")" 2>/dev/null && pwd -P)" || return 1
-    p="$(readlink "$p")" || return 1
-    case "$p" in /*) ;; *) p="$d/$p" ;; esac
-  done
-  if [ -d "$p" ]; then
-    (cd "$p" 2>/dev/null && pwd -P)
-  else
-    d="$(cd "$(dirname "$p")" 2>/dev/null && pwd -P)" || return 1
-    b="$(basename "$p")"
-    printf '%s/%s\n' "$d" "$b"
-  fi
-}
 
 # --- Гейт 2/2b: компонент, пара файлов, форма контракта ---------------------
 if [ ! -f contracts/AGENTS.md ]; then
@@ -254,61 +236,102 @@ markdown_rc=0
 if [ "$markdown_rc" -ne 0 ] || [ -s "$HOOK_TMPDIR/md-err" ]; then
   while IFS= read -r line; do echo "pre-push:   $line" >&2; done < "$HOOK_TMPDIR/md-err"
   no_verdict_report "git ls-files не вынес вердикт (exit $markdown_rc)"
+elif ! command -v python3 >/dev/null 2>&1 || ! command -v pandoc >/dev/null 2>&1; then
+  no_verdict_report "python3 и pandoc требуются для проверки CommonMark-ссылок (гейт 3)"
 else
-  repo_phys="$(cd "$REPO_DIR" && pwd -P)"
-  while IFS= read -r -d '' md; do
-    md_dir="$(dirname "$md")"
-    if [ ! -r "$md" ]; then
-      report "$md отслеживается, но не читается — ссылки этого файла не проверены."
-      continue
-    fi
-    # строки-ограничители fenced-блоков (```… без обратных кавычек в хвосте)
-    # переключают режим пропуска: пример синтаксиса в коде — не ссылка
-    awk_rc=0
-    awk '/^[[:space:]]*`{3,}[^`]*$/{f=!f; next} !f' "$md" > "$HOOK_TMPDIR/md-body" || awk_rc=$?
-    if [ "$awk_rc" -ne 0 ]; then
-      no_verdict_report "awk не смог разобрать $md (exit $awk_rc)"
-      continue
-    fi
-    grep_rc=0
-    grep -oE '\]\([^)]+\)' "$HOOK_TMPDIR/md-body" > "$HOOK_TMPDIR/link-matches" || grep_rc=$?
-    if [ "$grep_rc" -gt 1 ]; then
-      no_verdict_report "grep не смог извлечь ссылки из $md (exit $grep_rc)"
-      continue
-    fi
-    if ! sed -E 's/^\]\((.*)\)$/\1/' "$HOOK_TMPDIR/link-matches" > "$HOOK_TMPDIR/link-targets"; then
-      no_verdict_report "sed не смог нормализовать ссылки из $md"
-      continue
-    fi
-    while IFS= read -r link; do
-      [ -n "$link" ] || continue
-      link="${link%%\"*}"                              # заголовок ссылки ("title")
-      link="${link%"${link##*[![:space:]]}"}"          # хвостовые пробелы
-      link="${link#"${link%%[![:space:]]*}"}"          # ведущие пробелы
-      case "$link" in
-        \<*) link="${link#<}"; link="${link%%>*}" ;;    # форма <путь или URL>
-      esac
-      link="${link%"${link##*[![:space:]]}"}"          # пробелы внутри <...>
-      link="${link#"${link%%[![:space:]]*}"}"
-      [ -n "$link" ] || continue
-      case "$link" in
-        [A-Za-z][A-Za-z0-9+.-]*:*|\#*|/*) continue ;;
-      esac
-      link="${link%%#*}"                                # якорь внутри файла не проверяем
-      link="${link%/}"                                  # хвостовой слэш каталога
-      [ -n "$link" ] || continue
-      target_path="$md_dir/$link"
-      if [ ! -e "$target_path" ]; then
-        report "битая ссылка в $md: $link"
+  link_rc=0
+  python3 - "$REPO_DIR" "$HOOK_TMPDIR/md-list" > "$HOOK_TMPDIR/link-findings" 2> "$HOOK_TMPDIR/link-err" <<'PY' || link_rc=$?
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+from urllib.parse import unquote, urlsplit
+
+repo_real = os.path.realpath(sys.argv[1])
+list_bytes = Path(sys.argv[2]).read_bytes()
+paths = [p.decode("utf-8", errors="surrogateescape") for p in list_bytes.split(b"\0") if p]
+
+def emit(kind, msg):
+    clean = msg.replace("\r", "\\r").replace("\n", "\\n").replace("\t", "\\t")
+    sys.stdout.write(f"{kind}\t{clean}\0")
+
+def walk_urls(node):
+    if isinstance(node, dict):
+        if node.get("t") in ("Link", "Image"):
+            yield node["c"][2][0]
+        for v in node.values():
+            yield from walk_urls(v)
+    elif isinstance(node, list):
+        for v in node:
+            yield from walk_urls(v)
+
+for md in paths:
+    md_path = os.path.join(repo_real, md)
+    if not os.path.isfile(md_path) or not os.access(md_path, os.R_OK):
+        emit("REPORT", f"{md} отслеживается, но не читается — ссылки этого файла не проверены.")
         continue
-      fi
-      target_phys="$(resolve_phys "$target_path")" || target_phys=""
-      case "$target_phys" in
-        "$repo_phys"|"$repo_phys"/*) ;;
-        *) report "ссылка в $md выходит за пределы репозитория: $link" ;;
+    try:
+        text = Path(md_path).read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        emit("NOVERDICT", f"не удалось прочитать {md}: {exc}")
+        continue
+    res = subprocess.run(
+        ["pandoc", "-f", "commonmark", "-t", "json"],
+        input=text,
+        text=True,
+        capture_output=True,
+    )
+    if res.returncode != 0:
+        err_msg = res.stderr.strip() or f"exit {res.returncode}"
+        emit("NOVERDICT", f"pandoc не смог разобрать {md}: {err_msg}")
+        continue
+    try:
+        ast = json.loads(res.stdout)
+    except json.JSONDecodeError as exc:
+        emit("NOVERDICT", f"pandoc вернул некорректный JSON для {md}: {exc}")
+        continue
+    md_dir = os.path.dirname(md_path)
+    for url in walk_urls(ast):
+        if not url or url.startswith(("#", "/")) or re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", url):
+            continue
+        try:
+            parsed = urlsplit(url)
+        except ValueError as exc:
+            emit("REPORT", f"некорректный URL в {md}: {url} ({exc})")
+            continue
+        if parsed.scheme or parsed.netloc or parsed.path.startswith("/"):
+            continue
+        cleaned = unquote(parsed.path)
+        if not cleaned:
+            continue
+        if cleaned.startswith("/") or os.path.isabs(cleaned):
+            emit("REPORT", f"абсолютный путь в относительной ссылке {md}: {url}")
+            continue
+        if "\0" in cleaned:
+            emit("REPORT", f"недопустимый NUL-байт в ссылке {md}: {url}")
+            continue
+        target_path = os.path.join(md_dir, cleaned)
+        if not os.path.exists(target_path):
+            emit("REPORT", f"битая ссылка в {md}: {cleaned}")
+            continue
+        resolved = os.path.realpath(target_path)
+        if resolved != repo_real and not resolved.startswith(repo_real + os.sep):
+            emit("REPORT", f"ссылка в {md} выходит за пределы репозитория: {cleaned}")
+PY
+  if [ "$link_rc" -ne 0 ] || [ -s "$HOOK_TMPDIR/link-err" ]; then
+    while IFS= read -r line; do echo "pre-push:   $line" >&2; done < "$HOOK_TMPDIR/link-err"
+    no_verdict_report "проверка CommonMark-ссылок завершилась с ошибкой (exit $link_rc)"
+  else
+    while IFS=$'\t' read -r -d '' kind msg; do
+      case "$kind" in
+        REPORT) report "$msg" ;;
+        NOVERDICT) no_verdict_report "$msg" ;;
+        *) no_verdict_report "неизвестный результат проверки ссылок: $kind" ;;
       esac
-    done < "$HOOK_TMPDIR/link-targets"
-  done < "$HOOK_TMPDIR/md-list"
+    done < "$HOOK_TMPDIR/link-findings"
+  fi
 fi
 
 # --- Гейт 4: артефакт разбирается и деградирует / валидируется по формату ----

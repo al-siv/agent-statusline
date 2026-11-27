@@ -1,8 +1,10 @@
 # harness-pin: хэши файлов харнесса родителя (/Users/alsiv/dev/agent-skills)
-# переписан: 2026-11-15 (дата последней адаптации этого репо)
-# база AGENTS.md: cd9a0f8
-# база contracts/AGENTS.md: cd9a0f8
-# база .hooks/pre-push: cd9a0f8
-271648f8a7852f0bcdd1ace5fad98b514a0fcad6272203085c712ed9d282d331  AGENTS.md
-6c3dcd0c418e4425b9275f6ab660f75fa9e79f97e041cdc092fca6a917e56e20  contracts/AGENTS.md
-2be27980bd5c10b12efeadaa03d148ddc8df72cec8d8482e7693856e72887b8f  .hooks/pre-push
+# переписан: 2026-11-27 (дата последней адаптации этого репо)
+# база AGENTS.md: 9d788a4
+# база rules/skill-authoring.md: 9d788a4
+# база rules/verification.md: 9d788a4
+# база .hooks/pre-push: 9d788a4
+5859332dd71ee04bef668809529751a8908eb3bae9918e07607414cc7ef21431  AGENTS.md
+ef3a89eb49c287fd1859e221a71b0cb4c26d497aefa3a93a3a116769645d83fb  rules/skill-authoring.md
+ba732b3528fea8b97e0e5e37a5a6720878101b7aa85b289807512cda28e79757  rules/verification.md
+02e1fe240eb46f18e959ba11cb3b0313f6841ef6eb74f758220521be8a98c931  .hooks/pre-push
